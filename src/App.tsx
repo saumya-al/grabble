@@ -28,6 +28,7 @@ async function loadDictionary() {
     const text = await response.text();
     const words = text.split('\n')
       .map(line => line.trim().toUpperCase())
+      .filter(line => line.length > 0 && !line.startsWith('#')) // Skip empty lines and comments
       .filter(word => word.length >= 3 && /^[A-Z]+$/.test(word));
     dictionary = new Set(words);
     console.log(`Loaded ${dictionary.size} words from dictionary`);
