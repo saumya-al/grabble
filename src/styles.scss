@@ -648,12 +648,33 @@ input, textarea, [contenteditable] {
     .board {
         width: min(95vw, 400px);
         height: min(95vw, 400px);
+        /* Prevent text selection and scrolling during touch */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+    
+    .board .cell {
+        /* Better touch targets on mobile */
+        min-height: 48px;
+        min-width: 48px;
+        /* Prevent text selection */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
     }
     
     .rack .rack-tile {
-        width: 45px;
-        height: 55px;
+        width: 50px;
+        height: 60px;
         font-size: 0.9rem;
+        /* Better touch targets */
+        min-height: 48px;
+        min-width: 48px;
+        /* Prevent text selection */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
     }
     
     .action-buttons {
@@ -664,6 +685,10 @@ input, textarea, [contenteditable] {
         padding: 1rem;
         font-size: 1rem;
         min-height: 48px; /* Better touch target */
+        /* Prevent text selection */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
     }
     
     .navbar {
@@ -674,6 +699,12 @@ input, textarea, [contenteditable] {
     .score-area {
         padding: 0.75rem;
         font-size: 0.85rem;
+    }
+    
+    /* Prevent scrolling on body during touch interactions */
+    body {
+        touch-action: pan-y; /* Allow vertical scrolling but prevent horizontal */
+        -webkit-overflow-scrolling: touch;
     }
 }
 

@@ -40,6 +40,25 @@ const Board: React.FC<BoardProps> = ({
   const [isTouchingWord, setIsTouchingWord] = useState(false);
   const [touchStartPos, setTouchStartPos] = useState<Position | null>(null);
   const [touchCurrentPos, setTouchCurrentPos] = useState<Position | null>(null);
+  
+  // Helper to get cell position from touch coordinates
+  const getCellFromTouch = (e: React.TouchEvent): Position | null => {
+    const touch = e.touches[0] || e.changedTouches[0];
+    if (!touch) return null;
+    
+    const boardElement = e.currentTarget.closest('.board');
+    if (!boardElement) return null;
+    
+    const rect = boardElement.getBoundingClientRect();
+    const cellSize = rect.width / 7;
+    const x = Math.floor((touch.clientX - rect.left) / cellSize);
+    const y = Math.floor((touch.clientY - rect.top) / cellSize);
+    
+    if (x >= 0 && x < 7 && y >= 0 && y < 7) {
+      return { x, y };
+    }
+    return null;
+  };
 
   // Add document-level drop handler to catch drops outside the board
   useEffect(() => {
@@ -154,40 +173,65 @@ const Board: React.FC<BoardProps> = ({
       setIsTouchingWord(true);
       setTouchStartPos({ x, y });
       setTouchCurrentPos({ x, y });
+      setTouchStartTime(Date.now());
       e.preventDefault(); // Prevent scrolling
+      e.stopPropagation();
     }
   };
 
-  const handleTouchMove = (e: React.TouchEvent, x: number, y: number) => {
+  // Board-level touch move handler to track movement across cells
+  const handleBoardTouchMove = (e: React.TouchEvent) => {
     if (isTouchingWord && touchStartPos) {
-      setTouchCurrentPos({ x, y });
+      const cellPos = getCellFromTouch(e);
+      if (cellPos) {
+        setTouchCurrentPos(cellPos);
+      }
       e.preventDefault(); // Prevent scrolling while selecting
     }
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (isTouchingWord && touchStartPos && touchCurrentPos && onWordSelect) {
-      const positions = getPositionsBetween(touchStartPos, touchCurrentPos);
-      // Filter to only positions with tiles
-      const validPositions = positions.filter(pos => 
-        pos.x >= 0 && pos.x < 7 && pos.y >= 0 && pos.y < 7 && board[pos.y]?.[pos.x]
-      );
+  const handleTouchMove = (e: React.TouchEvent, x: number, y: number) => {
+    // This is called per cell, but we'll handle it at board level
+    if (isTouchingWord) {
+      e.preventDefault();
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent, x?: number, y?: number) => {
+    // If we were selecting a word, handle word selection
+    if (isTouchingWord && touchStartPos && touchCurrentPos) {
+      // Check if we actually moved (swipe) vs just tapped
+      const moved = touchStartPos.x !== touchCurrentPos.x || touchStartPos.y !== touchCurrentPos.y;
       
-      if (validPositions.length >= 3 && isValidWordLine(validPositions)) {
-        // Preserve touch direction (start to end, not sorted)
-        onWordSelect(validPositions);
+      if (moved && onWordSelect) {
+        const positions = getPositionsBetween(touchStartPos, touchCurrentPos);
+        // Filter to only positions with tiles
+        const validPositions = positions.filter(pos => 
+          pos.x >= 0 && pos.x < 7 && pos.y >= 0 && pos.y < 7 && board[pos.y]?.[pos.x]
+        );
+        
+        if (validPositions.length >= 3 && isValidWordLine(validPositions)) {
+          // Preserve touch direction (start to end, not sorted)
+          onWordSelect(validPositions);
+        }
       }
       
       setIsTouchingWord(false);
       setTouchStartPos(null);
       setTouchCurrentPos(null);
-    } else if (isTouchingWord) {
-      // Cancel touch if no valid selection
-      setIsTouchingWord(false);
-      setTouchStartPos(null);
-      setTouchCurrentPos(null);
+      setTouchStartTime(0);
+      e.preventDefault();
+      e.stopPropagation();
+    } else if (x !== undefined && y !== undefined) {
+      // If not selecting word, handle tap-to-place for empty top row cells
+      const isEmpty = board[y][x] === null;
+      const isTopRow = y === 0;
+      if (isEmpty && isTopRow && onColumnClick) {
+        e.preventDefault();
+        e.stopPropagation();
+        onColumnClick(x);
+      }
     }
-    e.preventDefault();
   };
 
   // Get currently dragging/touching word positions for visual feedback
@@ -298,6 +342,7 @@ const Board: React.FC<BoardProps> = ({
             setDragCurrentPos(null);
           }
         }}
+        onTouchMove={handleBoardTouchMove}
         onTouchCancel={() => {
           // Cancel touch if touch is cancelled
           if (isTouchingWord) {
@@ -306,6 +351,7 @@ const Board: React.FC<BoardProps> = ({
             setTouchCurrentPos(null);
           }
         }}
+        style={{ touchAction: 'none' }} // Prevent default touch behaviors
       >
         {board.map((row, y) =>
           row.map((cell, x) => {
@@ -324,8 +370,14 @@ const Board: React.FC<BoardProps> = ({
                 onMouseMove={(e) => handleMouseMove(e, x, y)}
                 onTouchStart={(e) => handleTouchStart(e, x, y)}
                 onTouchMove={(e) => handleTouchMove(e, x, y)}
-                onTouchEnd={handleTouchEnd}
-                onClick={() => {
+                onTouchEnd={(e) => handleTouchEnd(e, x, y)}
+                style={{ touchAction: 'none' }} // Prevent default touch behaviors
+                onClick={(e) => {
+                  // Prevent click if we just finished a touch selection
+                  if (isTouchingWord) {
+                    e.preventDefault();
+                    return;
+                  }
                   if (isEmpty && isTopRow) {
                     onColumnClick(x);
                   }
