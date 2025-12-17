@@ -42,6 +42,7 @@ export interface ClientToServerEvents {
     claim_words: (data: { claims: Array<{ positions: Array<{ x: number; y: number }> }> }) => void;
     swap_tiles: (data: { tileIndices: number[] }) => void;
     end_turn: () => void;
+    remove_tile: (data: { column: number; row: number }) => void;
 }
 
 /**
@@ -56,8 +57,9 @@ export interface ServerToClientEvents {
     player_ready: (data: { playerId: string; ready: boolean }) => void;
     game_started: (gameState: GameState) => void;
     game_state: (gameState: GameState) => void;
-    tiles_placed: (data: { playerId: string; gameState: GameState }) => void;
-    words_claimed: (data: { playerId: string; results: any; gameState: GameState }) => void;
+    tiles_placed: (data: { playerId: string; gameState: GameState; placedPositions?: Array<{ x: number; y: number }> }) => void;
+    tile_removed: (data: { playerId: string; gameState: GameState; removedPosition: { x: number; y: number } }) => void;
+    words_claimed: (data: { playerId: number; results: any; gameState: GameState }) => void;
     tiles_swapped: (data: { playerId: string; gameState: GameState }) => void;
     turn_changed: (data: { currentPlayerId: number; gameState: GameState }) => void;
     game_ended: (data: { winnerId: number; finalState: GameState }) => void;

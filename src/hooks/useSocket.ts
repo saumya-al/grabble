@@ -45,6 +45,7 @@ interface UseSocketReturn {
 
     // Game state
     gameState: GameState | null;
+    tilesPlacedThisTurn: Array<{ x: number; y: number }>;  // NEW: Track placed tiles for current turn
 
     // Error handling
     error: string | null;
@@ -62,6 +63,7 @@ interface UseSocketReturn {
     claimWords: (claims: Array<{ positions: Array<{ x: number; y: number }> }>) => void;
     swapTiles: (tileIndices: number[]) => void;
     endTurn: () => void;
+    removeTile: (column: number, row: number) => void;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -71,6 +73,7 @@ export function useSocket(): UseSocketReturn {
     const [room, setRoom] = useState<Room | null>(null);
     const [playerId, setPlayerId] = useState<string | null>(null);
     const [gameState, setGameState] = useState<GameState | null>(null);
+    const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Array<{ x: number; y: number }>>([]);
     const [error, setError] = useState<string | null>(null);
 
     // Initialize socket connection
@@ -162,7 +165,18 @@ export function useSocket(): UseSocketReturn {
 
         socket.on('tiles_placed', (data: Parameters<ServerToClientEvents['tiles_placed']>[0]) => {
             const { gameState } = data;
+            // Type cast needed because TypeScript may cache the old type
+            const placedPositions = (data as any).placedPositions as Array<{ x: number; y: number }> | undefined;
+            console.log('📥 Received tiles_placed, placedPositions:', placedPositions);
             setGameState(gameState);
+            // Accumulate placed tiles for this turn
+            if (placedPositions) {
+                setTilesPlacedThisTurn(prev => {
+                    const updated = [...prev, ...placedPositions];
+                    console.log('📍 Updated tilesPlacedThisTurn:', updated);
+                    return updated;
+                });
+            }
         });
 
         socket.on('words_claimed', (data: Parameters<ServerToClientEvents['words_claimed']>[0]) => {
@@ -175,9 +189,20 @@ export function useSocket(): UseSocketReturn {
             setGameState(gameState);
         });
 
+        socket.on('tile_removed', (data: any) => {
+            const { gameState, removedPosition } = data as any; // Type cast to handle cached types
+            setGameState(gameState);
+            // Remove from tilesPlacedThisTurn
+            setTilesPlacedThisTurn(prev =>
+                prev.filter(pos => !(pos.x === removedPosition.x && pos.y === removedPosition.y))
+            );
+        });
+
         socket.on('turn_changed', (data: Parameters<ServerToClientEvents['turn_changed']>[0]) => {
             const { gameState } = data;
             setGameState(gameState);
+            // Clear tiles placed when turn changes
+            setTilesPlacedThisTurn([]);
         });
 
         socket.on('game_ended', (data: Parameters<ServerToClientEvents['game_ended']>[0]) => {
@@ -240,7 +265,13 @@ export function useSocket(): UseSocketReturn {
     }, []);
 
     const endTurn = useCallback(() => {
-        socketRef.current?.emit('end_turn');
+        if (!socketRef.current) return;
+        socketRef.current.emit('end_turn');
+    }, []);
+
+    const removeTile = useCallback((column: number, row: number) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('remove_tile', { column, row });
     }, []);
 
     const clearError = useCallback(() => {
@@ -255,6 +286,7 @@ export function useSocket(): UseSocketReturn {
         isHost,
         playerId,
         gameState,
+        tilesPlacedThisTurn,
         error,
         clearError,
         createRoom,
@@ -265,6 +297,7 @@ export function useSocket(): UseSocketReturn {
         placeTiles,
         claimWords,
         swapTiles,
-        endTurn
+        endTurn,
+        removeTile
     };
 }
