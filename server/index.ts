@@ -20,10 +20,10 @@ app.use(express.json());
 // HTTP server
 const httpServer = createServer(app);
 
-// Socket.IO server with CORS for React dev server
+// Socket.IO server with CORS for React dev server and local network
 const io = new Server(httpServer, {
     cors: {
-        origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+        origin: '*', // Allow connections from any IP (for local network play)
         methods: ['GET', 'POST'],
         credentials: true
     }

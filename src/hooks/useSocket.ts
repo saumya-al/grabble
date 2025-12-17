@@ -7,8 +7,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { GameState } from '../types';
 
-// Server URL - configurable via environment
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:3001';
+// Server URL - configurable, or defaults to the same host as the React app but on port 3001
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || `http://${window.location.hostname}:3001`;
 
 interface RoomPlayer {
     id: string;
