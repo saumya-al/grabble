@@ -44,21 +44,21 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
         </div>
       )}
       <div className="action-buttons-row">
-        <button 
-          className="btn btn-primary" 
-          onClick={onSubmit}
+      <button 
+        className="btn btn-primary" 
+        onClick={onSubmit}
           disabled={!canSubmit || !hasWordSelected}
-        >
-          Submit Move
-        </button>
-        <button 
-          className="btn btn-secondary" 
-          onClick={onSwap}
-          disabled={!canSwap}
+      >
+        Submit Move
+      </button>
+      <button 
+        className="btn btn-secondary" 
+        onClick={onSwap}
+        disabled={!canSwap}
           title={canSwap ? `Swap ${selectedTilesCount} selected tile${selectedTilesCount !== 1 ? 's' : ''}` : 'Select tiles to swap'}
-        >
+      >
           Swap Tiles {selectedTilesCount > 0 ? `(${selectedTilesCount})` : ''}
-        </button>
+      </button>
       </div>
     </div>
   );

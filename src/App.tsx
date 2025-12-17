@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import './App.css';
 import './styles.scss';
 import { GrabbleEngine } from './game-engine';
@@ -94,6 +94,7 @@ function App() {
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [renderKey, setRenderKey] = useState(0); // Force re-render
   const [fallingTiles, setFallingTiles] = useState<Set<string>>(new Set()); // Track tiles with falling animation
+  const prevSocketTilesPlacedRef = useRef<Position[]>([]); // Track previous socket tiles for animation (use ref to avoid dependency issues)
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
   const [showSwapConfirm, setShowSwapConfirm] = useState(false);
   const [blankTileModal, setBlankTileModal] = useState<{ isOpen: boolean; position: Position | null; currentLetter: string }>({
@@ -148,6 +149,39 @@ function App() {
       setDictionaryLoaded(true);
     });
   }, []);
+
+  // Trigger falling animation for newly placed tiles in multiplayer mode
+  useEffect(() => {
+    if (isMultiplayer && socketTilesPlacedThisTurn.length > prevSocketTilesPlacedRef.current.length) {
+      // Find newly placed tiles by comparing arrays
+      const newTiles = socketTilesPlacedThisTurn.filter(
+        newPos => !prevSocketTilesPlacedRef.current.some(
+          prevPos => prevPos.x === newPos.x && prevPos.y === newPos.y
+        )
+      );
+      
+      // Trigger falling animation for each new tile
+      newTiles.forEach(pos => {
+        const tileKey = `${pos.x}-${pos.y}`;
+        setFallingTiles(prev => new Set(prev).add(tileKey));
+        
+        // Remove animation after it completes
+        setTimeout(() => {
+          setFallingTiles(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(tileKey);
+            return newSet;
+          });
+        }, 500);
+      });
+      
+      // Update previous tiles
+      prevSocketTilesPlacedRef.current = [...socketTilesPlacedThisTurn];
+    } else if (!isMultiplayer) {
+      // Reset when switching to local mode
+      prevSocketTilesPlacedRef.current = [];
+    }
+  }, [socketTilesPlacedThisTurn, isMultiplayer]);
 
   const handleStartGame = (numPlayers: number, playerNames: string[], targetScore: number) => {
     const manager = GameStateManager.createNewGame(numPlayers, playerNames, targetScore);

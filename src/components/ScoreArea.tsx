@@ -18,8 +18,8 @@ const ScoreArea: React.FC<ScoreAreaProps> = ({ players, currentPlayerId }) => {
         const playerColorLight = getPlayerColorLight(player.id);
         const isCurrentPlayer = player.id === currentPlayerId;
         return (
-          <div 
-            key={player.id} 
+        <div 
+          key={player.id} 
             className={`player-score ${isCurrentPlayer ? 'current-player' : ''}`}
             style={{
               borderLeft: `4px solid ${playerColor}`,
@@ -28,7 +28,7 @@ const ScoreArea: React.FC<ScoreAreaProps> = ({ players, currentPlayerId }) => {
                 border: `2px solid ${playerColor}`,
               } : {})
             }}
-          >
+        >
             <div 
               className="player-name"
               style={{ color: playerColor, fontWeight: 'bold' }}
@@ -41,7 +41,7 @@ const ScoreArea: React.FC<ScoreAreaProps> = ({ players, currentPlayerId }) => {
             >
               {player.score}
             </div>
-          </div>
+        </div>
         );
       })}
     </div>
