@@ -669,8 +669,14 @@ function App() {
   };
 
   const handleSwapTiles = () => {
-    if (!gameManager || !engine || selectedTiles.length === 0) {
+    if (selectedTiles.length === 0) {
       showError('Please select tiles to swap.');
+      return;
+    }
+
+    // Check if we have the necessary components for local game
+    if (!isMultiplayer && (!gameManager || !engine)) {
+      showError('Game not initialized.');
       return;
     }
 
@@ -679,32 +685,51 @@ function App() {
   };
 
   const confirmSwapTiles = () => {
-    if (!gameManager || !engine || selectedTiles.length === 0) return;
-
-    const currentPlayer = gameManager.getCurrentPlayer();
+    if (selectedTiles.length === 0) return;
 
     try {
-      // Perform the swap
-      engine.swapTiles(currentPlayer.id, selectedTiles);
+      if (isMultiplayer) {
+        // Multiplayer: use socket
+        socketSwapTiles(selectedTiles);
+        
+        // Clear selections
+        setSelectedTiles([]);
+        setShowSwapConfirm(false);
+        
+        // Clear all turn state
+        setSelectedWords([]);
+        setTilesPlacedThisTurn([]);
+        setPendingPlacements([]);
+        
+        console.log('Tiles swapped via socket, turn will advance on server');
+      } else {
+        // Local game: use engine
+        if (!gameManager || !engine) return;
+        
+        const currentPlayer = gameManager.getCurrentPlayer();
+        
+        // Perform the swap
+        engine.swapTiles(currentPlayer.id, selectedTiles);
 
-      // Clear selections
-      setSelectedTiles([]);
-      setShowSwapConfirm(false);
+        // Clear selections
+        setSelectedTiles([]);
+        setShowSwapConfirm(false);
 
-      // Advance turn (player loses turn for swapping)
-      engine.advanceTurn();
+        // Advance turn (player loses turn for swapping)
+        engine.advanceTurn();
 
-      // Clear all turn state
-      setSelectedWords([]);
-      setTilesPlacedThisTurn([]);
-      setPendingPlacements([]);
+        // Clear all turn state
+        setSelectedWords([]);
+        setTilesPlacedThisTurn([]);
+        setPendingPlacements([]);
 
-      // Force re-render
-      setGameManager(gameManager);
-      setEngine(engine);
-      setRenderKey(prev => prev + 1);
+        // Force re-render
+        setGameManager(gameManager);
+        setEngine(engine);
+        setRenderKey(prev => prev + 1);
 
-      console.log('Tiles swapped, turn advanced');
+        console.log('Tiles swapped, turn advanced');
+      }
     } catch (error) {
       console.error('Error swapping tiles:', error);
       showError(`Error swapping tiles: ${error instanceof Error ? error.message : 'Unknown error'}`);

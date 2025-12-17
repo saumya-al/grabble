@@ -19,7 +19,10 @@
     },
     "include": [
         "./**/*.ts",
-        "../src/**/*.ts"
+        "../src/types.ts",
+        "../src/game-state-manager.ts",
+        "../src/game-engine.ts",
+        "../src/word-detection.ts"
     ],
     "exclude": [
         "node_modules",
