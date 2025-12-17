@@ -6,7 +6,7 @@
 
 import type { Tile, Position, TilePlacement, WordClaim, ClaimedWord, GameState, Player } from './types';
 import { STANDARD_SCRABBLE_DISTRIBUTION } from './types';
-import { isValidWordLine, extractWordFromPositions, getReverseWord, containsNewTile, findAllWords } from './word-detection';
+import { isValidWordLine, extractWordFromPositions, getReverseWord, containsNewTile, findAllWords, areWordsSameDirection, isSubstringWord } from './word-detection';
 
 /**
  * Core game engine for Grabble
@@ -333,9 +333,9 @@ export class GrabbleEngine {
             return { valid: false, error: 'Word already claimed' };
         }
 
-        // NEW RULE: Check that ALL words containing newly placed tiles are valid
-        // This prevents claiming "RAIN" when it's part of invalid "ROARAIN"
-        // But allows perpendicular words (like RAIN vertical next to ROAR horizontal)
+        // NEW RULE: Only reject invalid words in the SAME direction that contain the claimed word as a substring
+        // This prevents claiming "COT" when it's part of invalid "COTE" (same direction)
+        // But allows perpendicular words to be invalid (e.g., "RTL" vertical when claiming "COT" horizontal)
         const allWordsOnBoard = findAllWords(this.state.board);
         const wordsContainingNewTiles = allWordsOnBoard.filter(wordPositions => 
             containsNewTile(wordPositions, newlyPlacedTiles)
@@ -352,8 +352,7 @@ export class GrabbleEngine {
             
             // Check if this word is in the dictionary
             if (!dictionary.has(boardWordUpper)) {
-                // Check if this word overlaps with the claimed word positions
-                // If it's the same word being claimed, skip (already validated above)
+                // Check if this word is the same as the claimed word (already validated above)
                 const isClaimedWord = wordPositions.length === claim.positions.length &&
                     wordPositions.every(wp => 
                         claim.positions.some(cp => cp.x === wp.x && cp.y === wp.y)
@@ -363,11 +362,22 @@ export class GrabbleEngine {
                     continue; // This is the word being claimed, already validated
                 }
                 
-                // Found an invalid word containing newly placed tiles
-                return { 
-                    valid: false, 
-                    error: `Cannot claim "${word.toUpperCase()}" because it creates invalid word "${boardWordUpper}"` 
-                };
+                // Check if this invalid word is in the SAME direction as the claimed word
+                const sameDirection = areWordsSameDirection(claim.positions, wordPositions);
+                
+                // Check if the claimed word is a substring of this invalid word
+                const isSubstring = isSubstringWord(claim.positions, wordPositions);
+                
+                // Only reject if: same direction AND claimed word is a substring of the invalid word
+                if (sameDirection && isSubstring) {
+                    return { 
+                        valid: false, 
+                        error: `Cannot claim "${word.toUpperCase()}" because it is part of invalid word "${boardWordUpper}" in the same direction` 
+                    };
+                }
+                
+                // If perpendicular direction, allow it to be invalid (don't reject)
+                // This allows claiming "COT" even if "RTL" (perpendicular) is invalid
             }
         }
 

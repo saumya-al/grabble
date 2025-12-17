@@ -28,6 +28,22 @@ body {
     background: #ffffff;
     color: #1a1a1a;
     overflow-x: hidden;
+    /* Prevent text selection on mobile for better UX */
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    /* Prevent touch callouts and highlight on iOS */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+}
+
+/* Allow text selection only for input fields and editable content */
+input, textarea, [contenteditable] {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
 }
 
 .game-container {
@@ -144,6 +160,9 @@ body {
         min-width: 40px;
         border: 1px solid #e5e5e5;
         overflow: visible;
+        /* Improve touch targets on mobile */
+        touch-action: none; /* Prevent default touch behaviors for word selection */
+        -webkit-tap-highlight-color: transparent;
 
         &:hover {
             background: #f5f5f5;
@@ -291,6 +310,11 @@ body {
         color: #666;
         margin-bottom: 0.5rem;
         font-weight: 500;
+        /* Prevent text selection on instruction text */
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
     }
 }
 
@@ -616,6 +640,40 @@ body {
             width: 100%;
             margin-top: 1rem;
         }
+    }
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 767px) {
+    .board {
+        width: min(95vw, 400px);
+        height: min(95vw, 400px);
+    }
+    
+    .rack .rack-tile {
+        width: 45px;
+        height: 55px;
+        font-size: 0.9rem;
+    }
+    
+    .action-buttons {
+        padding: 1rem;
+    }
+    
+    .btn {
+        padding: 1rem;
+        font-size: 1rem;
+        min-height: 48px; /* Better touch target */
+    }
+    
+    .navbar {
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+    }
+    
+    .score-area {
+        padding: 0.75rem;
+        font-size: 0.85rem;
     }
 }
 

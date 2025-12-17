@@ -8,8 +8,27 @@ import { io, Socket } from 'socket.io-client';
 import type { GameState } from '../types';
 import type { Room, RoomPlayer, ServerToClientEvents } from '../../server/types';
 
-// Server URL - configurable, or defaults to the same host as the React app but on port 3001
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || `http://${window.location.hostname}:3001`;
+// Server URL - configurable via environment variable or config
+// For GitHub Pages: set REACT_APP_SOCKET_URL in build, or it will try to connect to same hostname:3001
+// For production: use your deployed server URL (e.g., https://your-app.railway.app)
+const getSocketUrl = (): string => {
+  // Check for environment variable (set at build time)
+  if (process.env.REACT_APP_SOCKET_URL) {
+    return process.env.REACT_APP_SOCKET_URL;
+  }
+  
+  // Check if we're on GitHub Pages (saumyamishraal.github.io)
+  if (window.location.hostname.includes('github.io')) {
+    // Replace with your actual server URL after deployment
+    // Example: return 'https://grabble-server.railway.app';
+    return 'https://your-server-url.railway.app'; // TODO: Replace with your actual server URL
+  }
+  
+  // Default: localhost for development
+  return `http://${window.location.hostname}:3001`;
+};
+
+const SOCKET_URL = getSocketUrl();
 
 // Types imported from server/types.ts
 

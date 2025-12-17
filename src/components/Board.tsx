@@ -36,6 +36,10 @@ const Board: React.FC<BoardProps> = ({
   const [isDraggingWord, setIsDraggingWord] = useState(false);
   const [dragStartPos, setDragStartPos] = useState<Position | null>(null);
   const [dragCurrentPos, setDragCurrentPos] = useState<Position | null>(null);
+  // Touch support for mobile word selection
+  const [isTouchingWord, setIsTouchingWord] = useState(false);
+  const [touchStartPos, setTouchStartPos] = useState<Position | null>(null);
+  const [touchCurrentPos, setTouchCurrentPos] = useState<Position | null>(null);
 
   // Add document-level drop handler to catch drops outside the board
   useEffect(() => {
@@ -143,12 +147,59 @@ const Board: React.FC<BoardProps> = ({
     }
   };
 
-  // Get currently dragging word positions for visual feedback
+  // Touch event handlers for mobile word selection
+  const handleTouchStart = (e: React.TouchEvent, x: number, y: number) => {
+    // Only start word selection if touching a tile (not empty cell)
+    if (board[y][x] && !isPlacingTiles) {
+      setIsTouchingWord(true);
+      setTouchStartPos({ x, y });
+      setTouchCurrentPos({ x, y });
+      e.preventDefault(); // Prevent scrolling
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent, x: number, y: number) => {
+    if (isTouchingWord && touchStartPos) {
+      setTouchCurrentPos({ x, y });
+      e.preventDefault(); // Prevent scrolling while selecting
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (isTouchingWord && touchStartPos && touchCurrentPos && onWordSelect) {
+      const positions = getPositionsBetween(touchStartPos, touchCurrentPos);
+      // Filter to only positions with tiles
+      const validPositions = positions.filter(pos => 
+        pos.x >= 0 && pos.x < 7 && pos.y >= 0 && pos.y < 7 && board[pos.y]?.[pos.x]
+      );
+      
+      if (validPositions.length >= 3 && isValidWordLine(validPositions)) {
+        // Preserve touch direction (start to end, not sorted)
+        onWordSelect(validPositions);
+      }
+      
+      setIsTouchingWord(false);
+      setTouchStartPos(null);
+      setTouchCurrentPos(null);
+    } else if (isTouchingWord) {
+      // Cancel touch if no valid selection
+      setIsTouchingWord(false);
+      setTouchStartPos(null);
+      setTouchCurrentPos(null);
+    }
+    e.preventDefault();
+  };
+
+  // Get currently dragging/touching word positions for visual feedback
   const getDraggingWordPositions = (): Position[] => {
-    if (!isDraggingWord || !dragStartPos || !dragCurrentPos) {
+    // Check both mouse drag and touch
+    const start = isTouchingWord ? touchStartPos : (isDraggingWord ? dragStartPos : null);
+    const current = isTouchingWord ? touchCurrentPos : (isDraggingWord ? dragCurrentPos : null);
+    
+    if (!start || !current) {
       return [];
     }
-    return getPositionsBetween(dragStartPos, dragCurrentPos).filter(pos => 
+    return getPositionsBetween(start, current).filter(pos => 
       pos.x >= 0 && pos.x < 7 && pos.y >= 0 && pos.y < 7 && board[pos.y]?.[pos.x]
     );
   };
@@ -247,6 +298,14 @@ const Board: React.FC<BoardProps> = ({
             setDragCurrentPos(null);
           }
         }}
+        onTouchCancel={() => {
+          // Cancel touch if touch is cancelled
+          if (isTouchingWord) {
+            setIsTouchingWord(false);
+            setTouchStartPos(null);
+            setTouchCurrentPos(null);
+          }
+        }}
       >
         {board.map((row, y) =>
           row.map((cell, x) => {
@@ -263,11 +322,14 @@ const Board: React.FC<BoardProps> = ({
                 className={`cell ${selected ? 'highlighted' : ''} ${isEmpty && isTopRow ? 'drop-zone' : ''} ${isDragOver ? 'drag-over' : ''} ${tile ? 'has-tile' : ''} ${isInDragSelection ? 'word-selecting' : ''}`}
                 onMouseDown={(e) => handleMouseDown(e, x, y)}
                 onMouseMove={(e) => handleMouseMove(e, x, y)}
+                onTouchStart={(e) => handleTouchStart(e, x, y)}
+                onTouchMove={(e) => handleTouchMove(e, x, y)}
+                onTouchEnd={handleTouchEnd}
                 onClick={() => {
                   if (isEmpty && isTopRow) {
                     onColumnClick(x);
                   }
-                  // Don't handle click for word selection - use drag instead
+                  // Don't handle click for word selection - use drag/touch instead
                 }}
                 onDoubleClick={(e) => {
                   // Double-click to remove tile (only if it's the current player's tile)
@@ -281,7 +343,7 @@ const Board: React.FC<BoardProps> = ({
                 onDragOver={(e) => handleDragOver(e, x, y)}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, x, y)}
-                title={isEmpty && isTopRow ? `Drop tile here (column ${x + 1})` : tile ? `${tile.letter} (${tile.points} pts) - Drag to select word, double-click to remove` : `Cell (${x + 1}, ${y + 1})`}
+                title={isEmpty && isTopRow ? `Tap to place tile (column ${x + 1})` : tile ? `${tile.letter} (${tile.points} pts) - Swipe to select word, double-tap to remove` : `Cell (${x + 1}, ${y + 1})`}
               >
                 {tile ? (
                   <div 

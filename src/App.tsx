@@ -19,8 +19,10 @@ import BlankTileModal from './components/BlankTileModal';
 // Dictionary loading function
 async function loadDictionary(): Promise<Set<string>> {
   try {
-    console.log('Loading dictionary from /dictionary.txt...');
-    const response = await fetch('/dictionary.txt');
+    // Use process.env.PUBLIC_URL for GitHub Pages compatibility
+    const dictionaryPath = `${process.env.PUBLIC_URL || ''}/dictionary.txt`;
+    console.log('Loading dictionary from', dictionaryPath, '...');
+    const response = await fetch(dictionaryPath);
     console.log('Dictionary fetch response:', response.status, response.statusText);
     
     if (!response.ok) {
@@ -90,8 +92,9 @@ function App() {
     return selectedWords
       .filter(positions => isValidWordLine(positions) && positions.length >= 3)
       .map(positions => {
-        // Extract word preserving the order of positions (drag direction)
-        return extractWordFromPositions(state.board, positions, true);
+        // Extract word using same logic as validation (sorted order for correct reading direction)
+        // This ensures recognizedWords matches what will be validated
+        return extractWordFromPositions(state.board, positions, false);
       })
       .filter(word => word.length >= 3);
   }, [selectedWords, gameManager]);

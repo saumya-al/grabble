@@ -27,7 +27,7 @@ const Rack: React.FC<RackProps> = ({ tiles, selectedIndices, onTileClick, onTile
 
   return (
     <div className="rack-container">
-      <div className="rack-label">Your Tiles (Drag anywhere on board)</div>
+      <div className="rack-label">Your Tiles (Tap to select, then tap board to place)</div>
       <div className="rack">
         {tiles.map((tile, index) => (
           <div

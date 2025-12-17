@@ -125,11 +125,41 @@ export function extractWordFromPositions(
         // Use positions as provided (respects drag direction)
         orderedPositions = positions;
     } else {
-        // Sort positions to get correct order (top-left to bottom-right)
-        orderedPositions = [...positions].sort((a, b) => {
-            if (a.y !== b.y) return a.y - b.y;
-            return a.x - b.x;
-        });
+        // Determine word direction and sort accordingly
+        if (positions.length === 0) {
+            return '';
+        }
+        
+        // Check the actual direction from the original positions (first to last)
+        // This tells us which direction the user selected
+        const firstPos = positions[0];
+        const lastPos = positions[positions.length - 1];
+        const dx = lastPos.x - firstPos.x;
+        const dy = lastPos.y - firstPos.y;
+        
+        // Determine reading direction based on word orientation
+        // For all straight-line words, preserve the selection direction (how user dragged)
+        // This allows selecting words in any direction
+        if (dx === 0 && dy !== 0) {
+            // Vertical word - preserve selection direction
+            // User can select top-to-bottom or bottom-to-top, both are valid
+            orderedPositions = [...positions]; // Use selection order as-is
+        } else if (dy === 0 && dx !== 0) {
+            // Horizontal word - preserve selection direction  
+            // User can select left-to-right or right-to-left, both are valid
+            orderedPositions = [...positions]; // Use selection order as-is
+        } else if (dx !== 0 && dy !== 0 && Math.abs(dx) === Math.abs(dy)) {
+            // Diagonal word - preserve selection direction
+            // User can select in any diagonal direction (top-left to bottom-right, 
+            // bottom-right to top-left, top-right to bottom-left, bottom-left to top-right)
+            orderedPositions = [...positions]; // Use selection order as-is
+        } else {
+            // Not a straight line - sort by y then x (top-left to bottom-right)
+            orderedPositions = [...positions].sort((a, b) => {
+                if (a.y !== b.y) return a.y - b.y;
+                return a.x - b.x;
+            });
+        }
     }
 
     const letters: string[] = [];
@@ -210,16 +240,14 @@ export function getReverseWord(
         return null;
     }
 
-    // Sort positions to get forward word
-    const sorted = [...positions].sort((a, b) => {
-        if (a.y !== b.y) return a.y - b.y;
-        return a.x - b.x;
-    });
+    // Reverse the positions array to get the reverse word
+    // This respects the selection order - if user selected left-to-right,
+    // reverse gives right-to-left, and vice versa
+    const reversedPositions = [...positions].reverse();
 
-    // Extract reverse word (read positions backwards)
+    // Extract reverse word (read reversed positions in order)
     const letters: string[] = [];
-    for (let i = sorted.length - 1; i >= 0; i--) {
-        const pos = sorted[i];
+    for (const pos of reversedPositions) {
         const tile = board[pos.y]?.[pos.x];
         if (tile) {
             // For blank tiles, use blankLetter if available, otherwise use space
@@ -244,5 +272,90 @@ export function containsNewTile(
     return positions.some(pos =>
         newlyPlacedTiles.some(newPos => newPos.x === pos.x && newPos.y === pos.y)
     );
+}
+
+/**
+ * Get the direction vector of a word (normalized to -1, 0, or 1)
+ * Returns { dx, dy } or null if not a valid word line
+ */
+export function getWordDirection(positions: Position[]): { dx: number; dy: number } | null {
+    if (positions.length < 2) {
+        return null;
+    }
+
+    // Sort positions to get consistent direction
+    const sorted = [...positions].sort((a, b) => {
+        if (a.y !== b.y) return a.y - b.y;
+        return a.x - b.x;
+    });
+
+    const dx = sorted[1].x - sorted[0].x;
+    const dy = sorted[1].y - sorted[0].y;
+
+    // Normalize direction to -1, 0, or 1
+    const dirX = dx === 0 ? 0 : (dx > 0 ? 1 : -1);
+    const dirY = dy === 0 ? 0 : (dy > 0 ? 1 : -1);
+
+    return { dx: dirX, dy: dirY };
+}
+
+/**
+ * Check if two words are in the same direction
+ */
+export function areWordsSameDirection(
+    word1Positions: Position[],
+    word2Positions: Position[]
+): boolean {
+    const dir1 = getWordDirection(word1Positions);
+    const dir2 = getWordDirection(word2Positions);
+    
+    if (!dir1 || !dir2) {
+        return false;
+    }
+    
+    return dir1.dx === dir2.dx && dir1.dy === dir2.dy;
+}
+
+/**
+ * Check if claimed word positions are a consecutive substring of longer word positions
+ * (i.e., all positions of claimed word appear consecutively within longer word)
+ */
+export function isSubstringWord(
+    claimedPositions: Position[],
+    longerWordPositions: Position[]
+): boolean {
+    if (claimedPositions.length >= longerWordPositions.length) {
+        return false; // Claimed word is not shorter
+    }
+
+    // Sort both to check for consecutive substring
+    const claimedSorted = [...claimedPositions].sort((a, b) => {
+        if (a.y !== b.y) return a.y - b.y;
+        return a.x - b.x;
+    });
+    
+    const longerSorted = [...longerWordPositions].sort((a, b) => {
+        if (a.y !== b.y) return a.y - b.y;
+        return a.x - b.x;
+    });
+
+    // Check if claimed positions appear consecutively in longer word
+    // Try to find the starting index where claimed word matches
+    for (let i = 0; i <= longerSorted.length - claimedSorted.length; i++) {
+        let matches = true;
+        for (let j = 0; j < claimedSorted.length; j++) {
+            const longerPos = longerSorted[i + j];
+            const claimedPos = claimedSorted[j];
+            if (longerPos.x !== claimedPos.x || longerPos.y !== claimedPos.y) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            return true; // Found consecutive match
+        }
+    }
+
+    return false;
 }
 

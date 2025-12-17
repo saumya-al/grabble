@@ -20,10 +20,15 @@ app.use(express.json());
 // HTTP server
 const httpServer = createServer(app);
 
-// Socket.IO server with CORS for React dev server and local network
+// Socket.IO server with CORS for React dev server, GitHub Pages, and local network
 const io = new Server(httpServer, {
     cors: {
-        origin: '*', // Allow connections from any IP (for local network play)
+        origin: [
+            'http://localhost:3000', // Local development
+            'https://saumyamishraal.github.io', // GitHub Pages
+            'https://*.github.io', // All GitHub Pages (wildcard)
+            '*' // Allow connections from any IP (for local network play)
+        ],
         methods: ['GET', 'POST'],
         credentials: true
     }
