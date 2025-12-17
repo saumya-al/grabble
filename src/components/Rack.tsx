@@ -8,12 +8,17 @@ interface RackProps {
   onTileClick: (index: number) => void;
   onTileDragStart?: (index: number, tile: Tile) => void;
   playerId?: number;
+  disabled?: boolean;  // When true, tiles cannot be dragged or selected
 }
 
-const Rack: React.FC<RackProps> = ({ tiles, selectedIndices, onTileClick, onTileDragStart, playerId = 0 }) => {
+const Rack: React.FC<RackProps> = ({ tiles, selectedIndices, onTileClick, onTileDragStart, playerId = 0, disabled = false }) => {
   const playerColor = getPlayerColor(playerId);
-  
+
   const handleDragStart = (e: React.DragEvent, index: number, tile: Tile) => {
+    if (disabled) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.dropEffect = 'move';
     // Set data in multiple formats for better compatibility
@@ -27,18 +32,20 @@ const Rack: React.FC<RackProps> = ({ tiles, selectedIndices, onTileClick, onTile
 
   return (
     <div className="rack-container">
-      <div className="rack-label">Your Tiles (Drag anywhere on board)</div>
+      <div className="rack-label">{disabled ? 'Waiting for your turn...' : 'Your Tiles (Drag anywhere on board)'}</div>
       <div className="rack">
         {tiles.map((tile, index) => (
           <div
             key={index}
-            className={`rack-tile ${selectedIndices.includes(index) ? 'selected' : ''}`}
-            onClick={() => onTileClick(index)}
-            draggable={true}
+            className={`rack-tile ${selectedIndices.includes(index) ? 'selected' : ''} ${disabled ? 'disabled' : ''}`}
+            onClick={() => !disabled && onTileClick(index)}
+            draggable={!disabled}
             onDragStart={(e) => handleDragStart(e, index, tile)}
             style={{
               backgroundColor: playerColor,
               color: 'white',
+              opacity: disabled ? 0.6 : 1,
+              cursor: disabled ? 'not-allowed' : 'grab',
             }}
           >
             <div className="letter">{tile.letter === ' ' ? '?' : tile.letter}</div>
@@ -51,4 +58,3 @@ const Rack: React.FC<RackProps> = ({ tiles, selectedIndices, onTileClick, onTile
 };
 
 export default Rack;
-
