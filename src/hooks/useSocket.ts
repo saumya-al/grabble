@@ -204,9 +204,18 @@ export function useSocket(): UseSocketReturn {
         socket.on('tile_removed', (data: any) => {
             const { gameState, removedPosition } = data as any; // Type cast to handle cached types
             setGameState(gameState);
-            // Remove from tilesPlacedThisTurn
+            // Update tilesPlacedThisTurn: remove the deleted position and adjust positions above it
+            // After gravity, tiles above the removed tile move down by 1 row
             setTilesPlacedThisTurn(prev =>
-                prev.filter(pos => !(pos.x === removedPosition.x && pos.y === removedPosition.y))
+                prev
+                    .filter(pos => !(pos.x === removedPosition.x && pos.y === removedPosition.y)) // Remove deleted tile
+                    .map(pos => {
+                        // If tile is in same column and above removed position, it moved down
+                        if (pos.x === removedPosition.x && pos.y < removedPosition.y) {
+                            return { x: pos.x, y: pos.y + 1 };
+                        }
+                        return pos;
+                    })
             );
         });
 

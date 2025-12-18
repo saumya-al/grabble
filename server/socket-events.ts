@@ -506,6 +506,7 @@ export function setupSocketEvents(
          * Remove a tile
          */
         socket.on('remove_tile', async ({ column, row }) => {
+            console.log(`🗑️ Remove tile request: column=${column}, row=${row}, socket=${socket.id}`);
             const room = roomManager.getRoomByPlayer(socket.id);
             if (!room || room.status !== 'playing') {
                 socket.emit('error', { message: 'Game not in progress' });
@@ -535,12 +536,14 @@ export function setupSocketEvents(
                 const tile = state.board[row][column];
 
                 if (!tile) {
+                    console.log(`❌ Tile not found at (${column}, ${row})`);
                     // Tile might already be gone
                     return;
                 }
 
                 // Verify ownership
                 if (tile.playerId !== playerId) {
+                    console.log(`❌ Tile ownership mismatch: tile.playerId=${tile.playerId}, playerId=${playerId}`);
                     socket.emit('error', { message: 'You can only remove your own tiles' });
                     return;
                 }
@@ -549,12 +552,16 @@ export function setupSocketEvents(
                 // Note: After gravity, tiles move down, so we check if ANY tile in this column
                 // was placed this turn, and if the tile at this position belongs to the player
                 const tilesPlacedThisTurn = playerTurnTiles.get(socket.id) || [];
+                console.log(`📍 Tiles placed this turn:`, tilesPlacedThisTurn);
                 // Check if any tile in this column was placed this turn
                 const tileInColumnPlacedThisTurn = tilesPlacedThisTurn.some(pos => pos.x === column);
                 if (!tileInColumnPlacedThisTurn) {
+                    console.log(`❌ No tile in column ${column} was placed this turn`);
                     socket.emit('error', { message: 'You can only remove tiles placed this turn' });
                     return;
                 }
+                
+                console.log(`✅ Validation passed, removing tile at (${column}, ${row})`);
 
                 // Remove the tile
                 const removedTile = gameEngine.removeTile(column, row);
