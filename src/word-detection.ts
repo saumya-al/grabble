@@ -156,9 +156,9 @@ export function extractWordFromPositions(
         } else {
             // Not a straight line - sort by y then x (top-left to bottom-right)
             orderedPositions = [...positions].sort((a, b) => {
-                if (a.y !== b.y) return a.y - b.y;
-                return a.x - b.x;
-            });
+        if (a.y !== b.y) return a.y - b.y;
+        return a.x - b.x;
+    });
         }
     }
 
@@ -170,8 +170,8 @@ export function extractWordFromPositions(
             if (tile.letter === ' ' && tile.blankLetter) {
                 letters.push(tile.blankLetter);
             } else {
-                letters.push(tile.letter);
-            }
+            letters.push(tile.letter);
+        }
         }
     }
 
@@ -254,7 +254,7 @@ export function getReverseWord(
             if (tile.letter === ' ' && tile.blankLetter) {
                 letters.push(tile.blankLetter);
             } else {
-                letters.push(tile.letter);
+            letters.push(tile.letter);
             }
         }
     }

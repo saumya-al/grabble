@@ -16,6 +16,9 @@ let dictionary: Set<string> = new Set();
 // Store game managers per room
 const gameManagers: Map<string, GameStateManager> = new Map();
 
+// Track tiles placed by players in the current turn (socket.id -> positions)
+const playerTurnTiles = new Map<string, Position[]>();
+
 export function setupSocketEvents(
     io: Server<ClientToServerEvents, ServerToClientEvents, {}, SocketData>,
     roomManager: RoomManager
@@ -32,6 +35,11 @@ export function setupSocketEvents(
         // Initialize socket data
         socket.data.playerId = socket.id;
         socket.data.roomCode = null;
+
+        // Clear turn tiles on disconnect
+        socket.on('disconnect', () => {
+            playerTurnTiles.delete(socket.id);
+        });
 
         /**
          * Create a new room
@@ -170,6 +178,9 @@ export function setupSocketEvents(
                 roomManager.setRoomStatus(room.code, 'playing');
                 roomManager.updateGameState(room.code, manager.getState());
 
+                // Clear any stored turn tiles from previous games
+                room.players.forEach(p => playerTurnTiles.delete(p.id));
+
                 const gameState = manager.getState();
                 io.to(room.code).emit('game_started', gameState);
                 console.log(`🎮 Game started in room ${room.code}`);
@@ -214,6 +225,12 @@ export function setupSocketEvents(
                     return;
                 }
 
+                // Get state before placement to track where tiles land
+                const prevState = manager.getState();
+
+                console.log(`📥 Place tiles request from ${player.name} (${playerId}):`, placements);
+                console.log('Rack before placement:', player.rack.map(t => t.letter).join(','));
+
                 // Convert placements to TilePlacement format
                 const tilePlacements: TilePlacement[] = placements.map(p => ({
                     column: p.column,
@@ -223,20 +240,45 @@ export function setupSocketEvents(
                 // Place tiles
                 engine.placeTiles(tilePlacements, playerId);
 
-                // Remove placed tiles from rack (in reverse order to maintain indices)
-                const indices = placements.map(p => p.tileIndex).sort((a, b) => b - a);
-                for (const idx of indices) {
-                    player.rack.splice(idx, 1);
-                }
+                // Remove placed tiles from rack using engine method (this modifies internal state)
+                const indices = placements.map(p => p.tileIndex);
+                const removedTiles = engine.removeTilesFromRack(playerId, indices);
+                console.log('Removed tiles from rack:', removedTiles.map(t => t?.letter).join(','));
 
                 const newState = manager.getState();
+                console.log('Rack after placement:', newState.players.find(p => p.id === playerId)?.rack.map(t => t.letter).join(','));
+
+                // Calculate where tiles actually landed (after gravity)
+                const placedPositions: Position[] = [];
+                for (const placement of tilePlacements) {
+                    const column = placement.column;
+                    // Find where the new tile landed in this column
+                    for (let row = 6; row >= 0; row--) {
+                        const boardTile = newState.board[row][column];
+                        const prevTile = prevState.board[row][column];
+                        // Tile exists now but didn't before, or changed ownership
+                        if (boardTile && (!prevTile || prevTile.playerId !== playerId) && boardTile.playerId === playerId) {
+                            placedPositions.push({ x: column, y: row });
+                            break;
+                        }
+                    }
+                }
+
+                // Update server-side turn tracking
+                const currentTurnTiles = playerTurnTiles.get(socket.id) || [];
+                playerTurnTiles.set(socket.id, [...currentTurnTiles, ...placedPositions]);
+
+                console.log('📤 Sending tiles_placed with placedPositions:', placedPositions);
+
                 roomManager.updateGameState(room.code, newState);
 
                 io.to(room.code).emit('tiles_placed', {
                     playerId: socket.id,
-                    gameState: newState
+                    gameState: newState,
+                    placedPositions  // NEW: Include where tiles landed
                 });
             } catch (error: any) {
+                console.error('Error placing tiles:', error);
                 socket.emit('error', { message: error.message });
             }
         });
@@ -263,6 +305,8 @@ export function setupSocketEvents(
                 return;
             }
 
+            console.log(`📥 Claim words request from ${playerId}:`, JSON.stringify(claims));
+
             const state = manager.getState();
             if (state.currentPlayerId !== playerId) {
                 socket.emit('error', { message: 'Not your turn' });
@@ -271,52 +315,66 @@ export function setupSocketEvents(
 
             try {
                 const engine = manager.getEngine();
+                const player = state.players.find(p => p.id === playerId);
+                if (!player) {
+                    socket.emit('error', { message: 'Player not found' });
+                    return;
+                }
 
-                // Convert claims to WordClaim format
+                // Retrieve tiles placed this turn by this player
+                const newlyPlacedTiles = playerTurnTiles.get(socket.id) || [];
+
+                // Validate with dictionary (use global directory variable)
+                console.log('Validating with dictionary size:', dictionary.size);
+
+                // Convert socket claims { positions: {x,y}[] } to WordClaim[] { positions: [], playerId }
                 const wordClaims: WordClaim[] = claims.map(c => ({
-                    positions: c.positions as Position[],
+                    positions: c.positions,
                     playerId
                 }));
 
-                // Get newly placed tiles (tiles with this player's ID that were just placed)
-                // For now, we'll track this on the client side and pass it
-                // This is a simplification - in production, you'd track this server-side
-                const newlyPlacedTiles: Position[] = []; // TODO: Track on server
+                const result = await engine.processWordClaims(wordClaims, newlyPlacedTiles, dictionary);
 
-                // Process word claims
-                const results = await engine.processWordClaims(wordClaims, newlyPlacedTiles, dictionary);
+                console.log('Validation result:', JSON.stringify(result));
 
-                if (results.valid) {
-                    // Refill rack and advance turn
-                    engine.refillPlayerRack(playerId);
-                    engine.advanceTurn();
+                if (!result.valid) {
+                    socket.emit('error', { message: 'Invalid word claims: ' + result.results.map(r => r.error).join(', ') });
+                    return;
+                }
 
-                    // Check win condition
-                    const winnerId = engine.checkWinCondition();
-                    const newState = manager.getState();
-                    roomManager.updateGameState(room.code, newState);
+                // Validation passed
+                player.score += result.totalScore;
+                engine.refillPlayerRack(playerId);
+                engine.advanceTurn();
 
-                    if (winnerId !== null) {
-                        roomManager.setRoomStatus(room.code, 'finished');
-                        io.to(room.code).emit('game_ended', {
-                            winnerId,
-                            finalState: newState
-                        });
-                    } else {
-                        io.to(room.code).emit('words_claimed', {
-                            playerId: socket.id,
-                            results,
-                            gameState: newState
-                        });
-                        io.to(room.code).emit('turn_changed', {
-                            currentPlayerId: newState.currentPlayerId,
-                            gameState: newState
-                        });
-                    }
+                // Clear turn tiles for this player
+                playerTurnTiles.delete(socket.id);
+
+                // Check win condition
+                const winnerId = engine.checkWinCondition();
+                const newState = manager.getState();
+                roomManager.updateGameState(room.code, newState);
+
+                if (winnerId !== null) {
+                    roomManager.setRoomStatus(room.code, 'finished');
+                    io.to(room.code).emit('game_ended', {
+                        winnerId,
+                        finalState: newState
+                    });
                 } else {
-                    socket.emit('error', { message: 'Invalid word claims' });
+                    io.to(room.code).emit('words_claimed', {
+                        playerId,
+                        results: result,
+                        gameState: newState
+                    });
+
+                    io.to(room.code).emit('turn_changed', {
+                        currentPlayerId: newState.currentPlayerId,
+                        gameState: newState
+                    });
                 }
             } catch (error: any) {
+                console.error('Error claiming words:', error);
                 socket.emit('error', { message: error.message });
             }
         });
@@ -351,6 +409,20 @@ export function setupSocketEvents(
 
             try {
                 const engine = manager.getEngine();
+
+                // Remove all tiles placed this turn from the board and return to rack
+                const placedTilesThisTurn = playerTurnTiles.get(socket.id) || [];
+                console.log(`🔄 Swapping tiles for player ${playerId}, removing ${placedTilesThisTurn.length} placed tiles first`);
+
+                for (const pos of placedTilesThisTurn) {
+                    const removedTile = engine.removeTile(pos.x, pos.y);
+                    if (removedTile) {
+                        engine.returnTileToRack(playerId, removedTile);
+                        console.log(`  ↩️ Removed tile at (${pos.x}, ${pos.y}) and returned to rack`);
+                    }
+                }
+
+                // Now swap the selected tiles
                 engine.swapTiles(playerId, tileIndices);
                 engine.advanceTurn();
 
@@ -365,6 +437,9 @@ export function setupSocketEvents(
                     currentPlayerId: newState.currentPlayerId,
                     gameState: newState
                 });
+
+                // Clear turn tiles
+                playerTurnTiles.delete(socket.id);
             } catch (error: any) {
                 socket.emit('error', { message: error.message });
             }
@@ -408,6 +483,129 @@ export function setupSocketEvents(
 
                 io.to(room.code).emit('turn_changed', {
                     currentPlayerId: newState.currentPlayerId,
+                    gameState: newState
+                });
+
+                // Clear turn tiles
+                playerTurnTiles.delete(socket.id);
+            } catch (error: any) {
+                socket.emit('error', { message: error.message });
+            }
+        });
+
+        /**
+         * Remove a tile
+         */
+        socket.on('remove_tile', async ({ column, row }) => {
+            const room = roomManager.getRoomByPlayer(socket.id);
+            if (!room || room.status !== 'playing') {
+                socket.emit('error', { message: 'Game not in progress' });
+                return;
+            }
+
+            const manager = gameManagers.get(room.code);
+            if (!manager) {
+                socket.emit('error', { message: 'Game not found' });
+                return;
+            }
+
+            const playerId = roomManager.getGamePlayerId(socket.id);
+            if (playerId === undefined) {
+                socket.emit('error', { message: 'Player not found' });
+                return;
+            }
+
+            const state = manager.getState();
+            if (state.currentPlayerId !== playerId) {
+                socket.emit('error', { message: 'Not your turn' });
+                return;
+            }
+
+            try {
+                const gameEngine = manager.getEngine();
+                const tile = state.board[row][column];
+
+                if (!tile) {
+                    // Tile might already be gone
+                    return;
+                }
+
+                // Verify ownership
+                if (tile.playerId !== playerId) {
+                    socket.emit('error', { message: 'You can only remove your own tiles' });
+                    return;
+                }
+
+                // Remove the tile
+                const removedTile = gameEngine.removeTile(column, row);
+                if (removedTile) {
+                    // Return tile to rack using engine method (modifies internal state)
+                    gameEngine.returnTileToRack(playerId, removedTile);
+
+                    const newState = manager.getState();
+                    roomManager.updateGameState(room.code, newState);
+
+                    io.to(room.code).emit('tile_removed', {
+                        playerId: socket.id,
+                        gameState: newState,
+                        removedPosition: { x: column, y: row }
+                    });
+
+                    // Remove from turn tracking
+                    const current = playerTurnTiles.get(socket.id);
+                    if (current) {
+                        playerTurnTiles.set(socket.id, current.filter(p => !(p.x === column && p.y === row)));
+                    }
+                }
+            } catch (error: any) {
+                socket.emit('error', { message: error.message });
+            }
+        });
+
+        /**
+         * Set letter for a blank tile
+         */
+        socket.on('set_blank_letter', ({ x, y, letter }) => {
+            const room = roomManager.getRoomByPlayer(socket.id);
+            if (!room || room.status !== 'playing') {
+                socket.emit('error', { message: 'Game not in progress' });
+                return;
+            }
+
+            const manager = gameManagers.get(room.code);
+            if (!manager) {
+                socket.emit('error', { message: 'Game not found' });
+                return;
+            }
+
+            const playerId = roomManager.getGamePlayerId(socket.id);
+            if (playerId === undefined) {
+                socket.emit('error', { message: 'Player not found' });
+                return;
+            }
+
+            const state = manager.getState();
+            if (state.currentPlayerId !== playerId) {
+                socket.emit('error', { message: 'Not your turn' });
+                return;
+            }
+
+            try {
+                const engine = manager.getEngine();
+                const success = engine.setBlankTileLetter(x, y, letter, playerId);
+
+                if (!success) {
+                    socket.emit('error', { message: 'Could not set blank tile letter' });
+                    return;
+                }
+
+                const newState = manager.getState();
+                roomManager.updateGameState(room.code, newState);
+
+                io.to(room.code).emit('blank_letter_set', {
+                    x,
+                    y,
+                    letter: letter.toUpperCase(),
                     gameState: newState
                 });
             } catch (error: any) {

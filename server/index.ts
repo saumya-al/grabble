@@ -25,13 +25,20 @@ const io = new Server(httpServer, {
     cors: {
         origin: [
             'http://localhost:3000', // Local development
+            'http://172.20.10.2:3000', // Local network IP
+            'http://10.14.59.105:3000', // Alternative local IP
             'https://saumyamishraal.github.io', // GitHub Pages
             'https://*.github.io', // All GitHub Pages (wildcard)
-            '*' // Allow connections from any IP (for local network play)
+            /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Any 192.168.x.x IP
+            /^http:\/\/172\.\d+\.\d+\.\d+:3000$/, // Any 172.x.x.x IP
+            /^http:\/\/10\.\d+\.\d+\.\d+:3000$/ // Any 10.x.x.x IP
         ],
         methods: ['GET', 'POST'],
-        credentials: true
-    }
+        credentials: true,
+        allowedHeaders: ['*']
+    },
+    transports: ['websocket', 'polling'], // Allow both transports
+    allowEIO3: true // Allow Engine.IO v3 clients
 });
 
 // Room manager for game lobbies

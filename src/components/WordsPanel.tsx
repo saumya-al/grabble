@@ -25,21 +25,21 @@ const WordsPanel: React.FC<WordsPanelProps> = ({ claimedWords, players }) => {
           claimedWords.map((cw, index) => {
             const playerColor = getPlayerColor(cw.playerId);
             return (
-              <div key={index} className="word-item">
+            <div key={index} className="word-item">
                 <span 
                   className="word-player"
                   style={{ color: playerColor, fontWeight: 'bold' }}
                 >
                   {getPlayerName(cw.playerId)}:
                 </span>
-                <span className="word-text">{cw.word.toUpperCase()}</span>
-                <span className="word-score">+{cw.score}</span>
-                {cw.bonuses.length > 0 && (
-                  <span className="word-bonuses">
-                    ({cw.bonuses.join(', ')})
-                  </span>
-                )}
-              </div>
+              <span className="word-text">{cw.word.toUpperCase()}</span>
+              <span className="word-score">+{cw.score}</span>
+              {cw.bonuses.length > 0 && (
+                <span className="word-bonuses">
+                  ({cw.bonuses.join(', ')})
+                </span>
+              )}
+            </div>
             );
           })
         )}

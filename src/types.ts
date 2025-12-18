@@ -106,35 +106,35 @@ export const STANDARD_SCRABBLE_DISTRIBUTION: Record<string, { count: number; poi
     'S': { count: 4, points: 1 },
     'T': { count: 6, points: 1 },
     'R': { count: 6, points: 1 },
-    
+
     // 2 point letters
     'D': { count: 4, points: 2 },
     'G': { count: 3, points: 2 },
-    
+
     // 3 point letters
     'B': { count: 2, points: 3 },
     'C': { count: 2, points: 3 },
     'M': { count: 2, points: 3 },
     'P': { count: 2, points: 3 },
-    
+
     // 4 point letters
     'F': { count: 2, points: 4 },
     'H': { count: 2, points: 4 },
     'V': { count: 2, points: 4 },
     'W': { count: 2, points: 4 },
     'Y': { count: 2, points: 4 },
-    
+
     // 5 point letters
     'K': { count: 1, points: 5 },
-    
+
     // 8 point letters
     'J': { count: 1, points: 8 },
     'X': { count: 1, points: 8 },
-    
+
     // 10 point letters
     'Q': { count: 1, points: 10 },
     'Z': { count: 1, points: 10 },
-    
+
     // Blank tiles
     ' ': { count: 2, points: 0 }
 };

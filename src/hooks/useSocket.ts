@@ -12,23 +12,24 @@ import type { Room, RoomPlayer, ServerToClientEvents } from '../../server/types'
 // For GitHub Pages: set REACT_APP_SOCKET_URL in build, or it will try to connect to same hostname:3001
 // For production: use your deployed server URL (e.g., https://your-app.railway.app)
 const getSocketUrl = (): string => {
-  // Check for environment variable (set at build time)
-  if (process.env.REACT_APP_SOCKET_URL) {
-    return process.env.REACT_APP_SOCKET_URL;
-  }
-  
-  // Check if we're on GitHub Pages (saumyamishraal.github.io)
-  if (window.location.hostname.includes('github.io')) {
-    // Replace with your actual server URL after deployment
-    // Example: return 'https://grabble-server.railway.app';
-    return 'https://your-server-url.railway.app'; // TODO: Replace with your actual server URL
-  }
-  
-  // Default: localhost for development
-  return `http://${window.location.hostname}:3001`;
+    // Check for environment variable (set at build time)
+    if (process.env.REACT_APP_SOCKET_URL) {
+        return process.env.REACT_APP_SOCKET_URL;
+    }
+
+    // Check if we're on GitHub Pages (saumyamishraal.github.io)
+    if (window.location.hostname.includes('github.io')) {
+        // Replace with your actual server URL after deployment
+        // Example: return 'https://grabble-server.railway.app';
+        return 'https://your-server-url.railway.app'; // TODO: Replace with your actual server URL
+    }
+
+    // Default: localhost for development
+    return `http://${window.location.hostname}:3001`;
 };
 
 const SOCKET_URL = getSocketUrl();
+console.log('🔌 Socket URL:', SOCKET_URL, 'from hostname:', window.location.hostname);
 
 // Types imported from server/types.ts
 
@@ -45,6 +46,7 @@ interface UseSocketReturn {
 
     // Game state
     gameState: GameState | null;
+    tilesPlacedThisTurn: Array<{ x: number; y: number }>;  // NEW: Track placed tiles for current turn
 
     // Error handling
     error: string | null;
@@ -62,6 +64,8 @@ interface UseSocketReturn {
     claimWords: (claims: Array<{ positions: Array<{ x: number; y: number }> }>) => void;
     swapTiles: (tileIndices: number[]) => void;
     endTurn: () => void;
+    removeTile: (column: number, row: number) => void;
+    setBlankLetter: (x: number, y: number, letter: string) => void;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -71,6 +75,7 @@ export function useSocket(): UseSocketReturn {
     const [room, setRoom] = useState<Room | null>(null);
     const [playerId, setPlayerId] = useState<string | null>(null);
     const [gameState, setGameState] = useState<GameState | null>(null);
+    const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Array<{ x: number; y: number }>>([]);
     const [error, setError] = useState<string | null>(null);
 
     // Initialize socket connection
@@ -79,16 +84,24 @@ export function useSocket(): UseSocketReturn {
             autoConnect: true,
             reconnection: true,
             reconnectionAttempts: 5,
-            reconnectionDelay: 1000
+            reconnectionDelay: 1000,
+            transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+            upgrade: true,
+            rememberUpgrade: false
         });
 
         socketRef.current = socket;
 
         // Connection events
         socket.on('connect', () => {
-            console.log('🔌 Connected to server');
+            console.log('✅ Connected to server at', SOCKET_URL);
             setConnected(true);
             setPlayerId(socket.id || null);
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('❌ Socket connection error:', error.message, 'trying to connect to:', SOCKET_URL);
+            setError(`Connection failed: ${error.message}. Server URL: ${SOCKET_URL}`);
         });
 
         socket.on('disconnect', () => {
@@ -162,7 +175,18 @@ export function useSocket(): UseSocketReturn {
 
         socket.on('tiles_placed', (data: Parameters<ServerToClientEvents['tiles_placed']>[0]) => {
             const { gameState } = data;
+            // Type cast needed because TypeScript may cache the old type
+            const placedPositions = (data as any).placedPositions as Array<{ x: number; y: number }> | undefined;
+            console.log('📥 Received tiles_placed, placedPositions:', placedPositions);
             setGameState(gameState);
+            // Accumulate placed tiles for this turn
+            if (placedPositions) {
+                setTilesPlacedThisTurn(prev => {
+                    const updated = [...prev, ...placedPositions];
+                    console.log('📍 Updated tilesPlacedThisTurn:', updated);
+                    return updated;
+                });
+            }
         });
 
         socket.on('words_claimed', (data: Parameters<ServerToClientEvents['words_claimed']>[0]) => {
@@ -172,12 +196,25 @@ export function useSocket(): UseSocketReturn {
 
         socket.on('tiles_swapped', (data: Parameters<ServerToClientEvents['tiles_swapped']>[0]) => {
             const { gameState } = data;
+            console.log('🔄 Tiles swapped, clearing turn state');
             setGameState(gameState);
+            setTilesPlacedThisTurn([]); // Clear placed tiles tracking
+        });
+
+        socket.on('tile_removed', (data: any) => {
+            const { gameState, removedPosition } = data as any; // Type cast to handle cached types
+            setGameState(gameState);
+            // Remove from tilesPlacedThisTurn
+            setTilesPlacedThisTurn(prev =>
+                prev.filter(pos => !(pos.x === removedPosition.x && pos.y === removedPosition.y))
+            );
         });
 
         socket.on('turn_changed', (data: Parameters<ServerToClientEvents['turn_changed']>[0]) => {
             const { gameState } = data;
             setGameState(gameState);
+            // Clear tiles placed when turn changes
+            setTilesPlacedThisTurn([]);
         });
 
         socket.on('game_ended', (data: Parameters<ServerToClientEvents['game_ended']>[0]) => {
@@ -185,6 +222,12 @@ export function useSocket(): UseSocketReturn {
             console.log(`🏆 Game ended! Winner: ${winnerId}`);
             setGameState(finalState);
             setRoom(prev => prev ? { ...prev, status: 'finished' } : null);
+        });
+
+        socket.on('blank_letter_set', (data: any) => {
+            const { gameState } = data;
+            console.log('📝 Blank letter set:', data.x, data.y, data.letter);
+            setGameState(gameState);
         });
 
         // Error handling
@@ -240,7 +283,18 @@ export function useSocket(): UseSocketReturn {
     }, []);
 
     const endTurn = useCallback(() => {
-        socketRef.current?.emit('end_turn');
+        if (!socketRef.current) return;
+        socketRef.current.emit('end_turn');
+    }, []);
+
+    const removeTile = useCallback((column: number, row: number) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('remove_tile', { column, row });
+    }, []);
+
+    const setBlankLetter = useCallback((x: number, y: number, letter: string) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('set_blank_letter', { x, y, letter });
     }, []);
 
     const clearError = useCallback(() => {
@@ -255,6 +309,7 @@ export function useSocket(): UseSocketReturn {
         isHost,
         playerId,
         gameState,
+        tilesPlacedThisTurn,
         error,
         clearError,
         createRoom,
@@ -265,6 +320,8 @@ export function useSocket(): UseSocketReturn {
         placeTiles,
         claimWords,
         swapTiles,
-        endTurn
+        endTurn,
+        removeTile,
+        setBlankLetter
     };
 }

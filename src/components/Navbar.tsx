@@ -8,7 +8,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentPlayerName }) => {
   return (
     <nav className="navbar">
       <h1>Grabble</h1>
-      <div className="turn-indicator">{currentPlayerName}'s Turn</div>
+      <div className="turn-indicator">{currentPlayerName}</div>
       <button className="menu-btn">☰</button>
     </nav>
   );
