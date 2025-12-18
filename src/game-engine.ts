@@ -428,4 +428,61 @@ export class GrabbleEngine {
         }
         return true;
     }
+
+    /**
+     * Remove tiles from a player's rack by indices
+     * Returns array of removed tiles
+     */
+    removeTilesFromRack(playerId: number, indices: number[]): Tile[] {
+        const player = this.state.players.find(p => p.id === playerId);
+        if (!player) {
+            throw new Error(`Player ${playerId} not found`);
+        }
+
+        const removedTiles: Tile[] = [];
+        for (const index of indices.sort((a, b) => b - a)) { // Sort descending to remove from end
+            if (index >= 0 && index < player.rack.length) {
+                removedTiles.push(player.rack.splice(index, 1)[0]);
+            }
+        }
+
+        return removedTiles;
+    }
+
+    /**
+     * Return a tile to a player's rack
+     */
+    returnTileToRack(playerId: number, tile: Tile): void {
+        const player = this.state.players.find(p => p.id === playerId);
+        if (!player) {
+            throw new Error(`Player ${playerId} not found`);
+        }
+
+        // Remove playerId from tile before returning to rack
+        const { playerId: _, ...tileWithoutPlayerId } = tile;
+        player.rack.push(tileWithoutPlayerId);
+    }
+
+    /**
+     * Set the letter for a blank tile on the board
+     * Returns true if successful, false otherwise
+     */
+    setBlankTileLetter(x: number, y: number, letter: string, playerId: number): boolean {
+        if (x < 0 || x >= 7 || y < 0 || y >= 7) {
+            return false;
+        }
+
+        const tile = this.state.board[y][x];
+        if (!tile || tile.letter !== ' ') {
+            return false;
+        }
+
+        // Only allow setting if the tile belongs to the player or if it's not locked
+        if (tile.playerId !== playerId && tile.isBlankLocked) {
+            return false;
+        }
+
+        tile.blankLetter = letter.toUpperCase();
+        return true;
+    }
 }

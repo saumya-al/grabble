@@ -8,7 +8,7 @@ import { RoomManager } from './room-manager';
 import type { ClientToServerEvents, ServerToClientEvents, SocketData } from './types';
 import { GameStateManager } from '../src/game-state-manager';
 import { loadDictionary } from './dictionary';
-import type { TilePlacement, WordClaim, Position } from '../src/types';
+import type { Tile, TilePlacement, WordClaim, Position } from '../src/types';
 
 // Dictionary for word validation
 let dictionary: Set<string> = new Set();
@@ -251,7 +251,7 @@ export function setupSocketEvents(
                 // Remove placed tiles from rack using engine method (this modifies internal state)
                 const indices = placements.map(p => p.tileIndex);
                 const removedTiles = engine.removeTilesFromRack(playerId, indices);
-                console.log('Removed tiles from rack:', removedTiles.map(t => t?.letter).join(','));
+                console.log('Removed tiles from rack:', removedTiles.map((t: Tile) => t?.letter).join(','));
 
                 const newState = manager.getState();
                 console.log('Rack after placement:', newState.players.find(p => p.id === playerId)?.rack.map(t => t.letter).join(','));
