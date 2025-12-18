@@ -187,7 +187,9 @@ export function useSocket(): UseSocketReturn {
 
         socket.on('tiles_swapped', (data: Parameters<ServerToClientEvents['tiles_swapped']>[0]) => {
             const { gameState } = data;
+            console.log('🔄 Tiles swapped, clearing turn state');
             setGameState(gameState);
+            setTilesPlacedThisTurn([]); // Clear placed tiles tracking
         });
 
         socket.on('tile_removed', (data: any) => {

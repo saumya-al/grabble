@@ -409,6 +409,20 @@ export function setupSocketEvents(
 
             try {
                 const engine = manager.getEngine();
+
+                // Remove all tiles placed this turn from the board and return to rack
+                const placedTilesThisTurn = playerTurnTiles.get(socket.id) || [];
+                console.log(`🔄 Swapping tiles for player ${playerId}, removing ${placedTilesThisTurn.length} placed tiles first`);
+
+                for (const pos of placedTilesThisTurn) {
+                    const removedTile = engine.removeTile(pos.x, pos.y);
+                    if (removedTile) {
+                        engine.returnTileToRack(playerId, removedTile);
+                        console.log(`  ↩️ Removed tile at (${pos.x}, ${pos.y}) and returned to rack`);
+                    }
+                }
+
+                // Now swap the selected tiles
                 engine.swapTiles(playerId, tileIndices);
                 engine.advanceTurn();
 

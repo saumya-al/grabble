@@ -179,17 +179,13 @@ function App() {
       // Check if any newly placed tile is a blank tile (needs letter assignment)
       if (socketGameState) {
         const myIdx = room?.players.findIndex(rp => rp.id === playerId) ?? -1;
-        console.log('🔍 Checking for blank tiles in newTiles:', newTiles, 'myIdx:', myIdx);
 
         for (const pos of newTiles) {
           const placedTile = socketGameState.board[pos.y]?.[pos.x];
-          console.log('🔍 Tile at', pos, ':', placedTile);
 
           if (placedTile && placedTile.letter === ' ' && !placedTile.isBlankLocked) {
-            console.log('🔍 Found blank tile! playerId on tile:', placedTile.playerId, 'myIdx:', myIdx);
             // Check if this tile belongs to me (I placed it)
             if (placedTile.playerId === myIdx) {
-              console.log('✅ Showing blank tile modal for position:', pos);
               setBlankTileModal({
                 isOpen: true,
                 position: pos,
@@ -208,6 +204,21 @@ function App() {
       prevSocketTilesPlacedRef.current = [];
     }
   }, [socketTilesPlacedThisTurn, isMultiplayer, socketGameState, room, playerId]);
+
+  // Clear UI state when turn changes in multiplayer
+  useEffect(() => {
+    if (isMultiplayer && socketGameState) {
+      const myIdx = room?.players.findIndex(rp => rp.id === playerId) ?? -1;
+      const isMyTurn = socketGameState.currentPlayerId === myIdx;
+
+      // If it's no longer my turn, clear all UI selections
+      if (!isMyTurn) {
+        setSelectedWords([]);
+        setSelectedTiles([]);
+        setWordDirection(null);
+      }
+    }
+  }, [isMultiplayer, socketGameState?.currentPlayerId, room, playerId]);
 
   const handleStartGame = (numPlayers: number, playerNames: string[], targetScore: number) => {
     const manager = GameStateManager.createNewGame(numPlayers, playerNames, targetScore);
