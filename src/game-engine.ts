@@ -348,10 +348,32 @@ export class GrabbleEngine {
             throw new Error(`Player ${playerId} not found`);
         }
 
-        while (player.rack.length < 7 && this.state.tileBag.length > 0) {
-            const tile = this.state.tileBag.pop()!;
-            player.rack.push(tile);
+        while (player.rack.length < 7) {
+            if (this.state.tileBag.length > 0) {
+                const tile = this.state.tileBag.pop()!;
+                player.rack.push(tile);
+            } else if (this.state.gameMode === 'solo') {
+                // Solo mode: infinite tiles - create new random tile
+                const newBag = GrabbleEngine.createTileBag();
+                this.state.tileBag = newBag;
+            } else {
+                // Normal mode: bag exhausted
+                break;
+            }
         }
+    }
+
+    /**
+     * Check if the board is completely full (game over condition for solo mode)
+     */
+    isBoardFull(): boolean {
+        for (let col = 0; col < 7; col++) {
+            // Check if top row of each column is empty
+            if (this.state.board[0][col] === null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

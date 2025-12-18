@@ -76,6 +76,8 @@ export interface GameState {
     gameStatus: 'waiting' | 'playing' | 'finished';
     winnerId?: number;           // Winner ID if game finished
     hintsEnabled?: boolean;      // Whether hints are allowed in this game
+    gameMode?: 'normal' | 'solo'; // Game mode (normal = multiplayer/local vs, solo = endless)
+    zenMode?: boolean;           // Hide score display in solo mode
 }
 
 /**

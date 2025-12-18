@@ -22,8 +22,8 @@ export class GameStateManager {
         playerNames: string[],
         targetScore: number = 100
     ): GameStateManager {
-        if (numPlayers < 2 || numPlayers > 4) {
-            throw new Error('Game must have 2-4 players');
+        if (numPlayers < 1 || numPlayers > 4) {
+            throw new Error('Game must have 1-4 players');
         }
         if (playerNames.length !== numPlayers) {
             throw new Error('Player names array must match number of players');
