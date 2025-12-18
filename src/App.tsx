@@ -5,6 +5,7 @@ import { GrabbleEngine } from './game-engine';
 import { GameStateManager } from './game-state-manager';
 import type { Tile, Position, WordClaim, Player, ClaimedWord } from './types';
 import { extractWordFromPositions, isValidWordLine, getReverseWord } from './word-detection';
+import { initSounds, playTileDropSound } from './utils/sounds';
 import SetupModal from './components/SetupModal';
 import Navbar from './components/Navbar';
 import ScoreArea from './components/ScoreArea';
@@ -17,6 +18,7 @@ import SwapConfirmModal from './components/SwapConfirmModal';
 import BlankTileModal from './components/BlankTileModal';
 import BonusOverlay from './components/BonusOverlay';
 import LobbyScreen from './components/LobbyScreen';
+import NewGameRequestModal from './components/NewGameRequestModal';
 import { useSocket } from './hooks/useSocket';
 import { getPlayerColor } from './utils/playerColors';
 
@@ -79,6 +81,12 @@ function App() {
     swapTiles: socketSwapTiles,
     removeTile: socketRemoveTile,
     setBlankLetter: socketSetBlankLetter,
+    requestNewGame: socketRequestNewGame,
+    respondNewGame: socketRespondNewGame,
+    newGameRequest,
+    newGameDeclined,
+    clearNewGameRequest,
+    clearNewGameDeclined,
   } = useSocket();
 
   // Multiplayer mode: true when in a room that is playing
@@ -96,7 +104,19 @@ function App() {
   const [dictionary, setDictionary] = useState<Set<string>>(new Set());
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [renderKey, setRenderKey] = useState(0); // Force re-render
+  const [soundEnabled, setSoundEnabled] = useState(true); // Sound toggle state
+  const [newGameRequestModal, setNewGameRequestModal] = useState<{
+    isOpen: boolean;
+    mode: 'request_sent' | 'request_received' | 'declined' | null;
+    requesterName?: string;
+    declinedPlayerName?: string;
+  }>({ isOpen: false, mode: null });
   const [fallingTiles, setFallingTiles] = useState<Set<string>>(new Set()); // Track tiles with falling animation
+  const [removingTiles, setRemovingTiles] = useState<Set<string>>(new Set()); // Track tiles being removed (flying to rack)
+  const [removingTileData, setRemovingTileData] = useState<Map<string, { dx: number; dy: number }>>(new Map()); // Removal animation direction
+  const [bottomRowShake, setBottomRowShake] = useState<Set<number>>(new Set()); // Columns that should shake at bottom row
+  const [fallingTileData, setFallingTileData] = useState<Map<string, { y: number; column: number; delay: number; duration: number }>>(new Map()); // Track tile fall data for stagger
+  const columnFallQueue = useRef<Map<number, Position[]>>(new Map()); // Track tiles falling in each column for stagger
   const prevSocketTilesPlacedRef = useRef<Position[]>([]); // Track previous socket tiles for animation (use ref to avoid dependency issues)
   const prevSocketBoardRef = useRef<(Tile | null)[][] | null>(null); // Track previous board state to detect new tiles
   const prevClaimedWordsLengthRef = useRef<number>(0); // Track previous claimed words length for palindrome detection
@@ -124,6 +144,11 @@ function App() {
   const closeErrorModal = () => {
     setErrorModal({ isOpen: false, message: '' });
   };
+
+  // Initialize sounds on mount
+  useEffect(() => {
+    initSounds();
+  }, []);
 
   // Show socket errors in the error modal
   useEffect(() => {
@@ -362,26 +387,84 @@ function App() {
       if (newTiles.length > 0) {
         // Use requestAnimationFrame to ensure DOM has updated with new tiles
         requestAnimationFrame(() => {
+          // Group tiles by column for stagger calculation
+          const tilesByColumn = new Map<number, Position[]>();
           newTiles.forEach(pos => {
-            const tileKey = `${pos.x}-${pos.y}`;
-            // Verify tile exists on board before animating
-            const tile = currentBoard[pos.y]?.[pos.x];
-            if (tile) {
-              setFallingTiles(prev => {
-                const newSet = new Set(prev);
-                newSet.add(tileKey);
-                return newSet;
-              });
-
-              // Remove animation after it completes
-              setTimeout(() => {
+            const column = pos.x;
+            if (!tilesByColumn.has(column)) {
+              tilesByColumn.set(column, []);
+            }
+            tilesByColumn.get(column)!.push(pos);
+          });
+          
+          // Process each column
+          tilesByColumn.forEach((columnTiles, column) => {
+            columnTiles.forEach((pos, index) => {
+              const tileKey = `${pos.x}-${pos.y}`;
+              // Verify tile exists on board before animating
+              const tile = currentBoard[pos.y]?.[pos.x];
+              if (tile) {
+                // Calculate fall distance (number of rows fallen)
+                const fallDistance = pos.y;
+                
+                // Calculate variable duration based on fall distance
+                // 1 row = 0.2s, 6 rows = 0.5s (linear interpolation)
+                const duration = 0.2 + (fallDistance * (0.5 - 0.2) / 6);
+                
+                // Calculate stagger delay for tiles in same column
+                const delay = index * 0.3; // 300ms delay between tiles in same column
+                
+                // Store tile data for animation
+                setFallingTileData(prev => {
+                  const newMap = new Map(prev);
+                  newMap.set(tileKey, {
+                    y: pos.y,
+                    column: pos.x,
+                    delay: delay,
+                    duration: duration
+                  });
+                  return newMap;
+                });
+                
                 setFallingTiles(prev => {
                   const newSet = new Set(prev);
-                  newSet.delete(tileKey);
+                  newSet.add(tileKey);
                   return newSet;
                 });
-              }, 500);
-            }
+
+                // Play sound when tile lands (at 70% of animation, when it hits the bottom)
+                const landingTime = (delay + duration * 0.7) * 1000; // 70% of animation = landing
+                setTimeout(() => {
+                  playTileDropSound(soundEnabled);
+                  // Trigger bottom row shake if falling more than 4 rows (when tile actually lands)
+                  if (fallDistance > 4) {
+                    setBottomRowShake(prev => new Set(prev).add(pos.x));
+                    setTimeout(() => {
+                      setBottomRowShake(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(pos.x);
+                        return newSet;
+                      });
+                    }, 300);
+                  }
+                }, landingTime);
+
+                // Remove animation after it completes
+                const totalTime = (delay + duration) * 1000 + 50; // Add 50ms buffer
+                setTimeout(() => {
+                  setFallingTiles(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(tileKey);
+                    return newSet;
+                  });
+                  setFallingTileData(prev => {
+                    const newMap = new Map(prev);
+                    newMap.delete(tileKey);
+                    return newMap;
+                  });
+                }, totalTime);
+              }
+            });
           });
         });
       }
@@ -447,6 +530,92 @@ function App() {
     setGameManager(manager);
     setEngine(gameEngine);
     setShowSetup(false);
+  };
+
+  // Handler for starting a new game from the menu
+  const handleStartNewGame = () => {
+    if (isMultiplayer) {
+      // In multiplayer, request a new game
+      socketRequestNewGame();
+      setNewGameRequestModal({
+        isOpen: true,
+        mode: 'request_sent',
+      });
+    } else {
+      // In local mode, show setup modal
+      setShowSetup(true);
+      // Reset game state
+      setGameManager(null);
+      setEngine(null);
+    }
+  };
+
+  // Watch for new game requests from other players
+  useEffect(() => {
+    console.log('🔍 Checking new game request:', { 
+      isMultiplayer, 
+      newGameRequest, 
+      playerId,
+      shouldShow: isMultiplayer && newGameRequest && playerId && newGameRequest.requesterId !== playerId
+    });
+    
+    if (isMultiplayer && newGameRequest && playerId) {
+      // Only show modal if I'm not the requester
+      if (newGameRequest.requesterId !== playerId) {
+        console.log('✅ Showing new game request modal for:', newGameRequest.requesterName);
+        setNewGameRequestModal({
+          isOpen: true,
+          mode: 'request_received',
+          requesterName: newGameRequest.requesterName,
+        });
+      } else {
+        console.log('⏭️ Skipping modal - I am the requester');
+      }
+    }
+  }, [newGameRequest, isMultiplayer, playerId]);
+
+  // Watch for declined notifications
+  useEffect(() => {
+    if (isMultiplayer && newGameDeclined) {
+      setNewGameRequestModal({
+        isOpen: true,
+        mode: 'declined',
+        declinedPlayerName: newGameDeclined.playerName,
+      });
+      clearNewGameDeclined();
+    }
+  }, [newGameDeclined, isMultiplayer, clearNewGameDeclined]);
+
+  // Watch for when new game request is cleared (all accepted) to close requester's modal
+  useEffect(() => {
+    if (isMultiplayer && !newGameRequest && newGameRequestModal.isOpen && newGameRequestModal.mode === 'request_sent') {
+      console.log('✅ All players accepted - closing requester modal');
+      setNewGameRequestModal({ isOpen: false, mode: null });
+    }
+  }, [newGameRequest, isMultiplayer, newGameRequestModal]);
+
+  // Handle new game request accept/decline
+  const handleAcceptNewGame = () => {
+    socketRespondNewGame(true);
+    setNewGameRequestModal({ isOpen: false, mode: null });
+    clearNewGameRequest();
+  };
+
+  const handleDeclineNewGame = () => {
+    socketRespondNewGame(false);
+    setNewGameRequestModal({ isOpen: false, mode: null });
+    clearNewGameRequest();
+  };
+
+  // Handler for requesting to clear the board (placeholder for future implementation)
+  const handleClearBoard = () => {
+    // TODO: Implement board clearing functionality
+    showError('Board clearing functionality coming soon!');
+  };
+
+  // Handler for toggling sound
+  const handleToggleSound = () => {
+    setSoundEnabled(prev => !prev);
   };
 
   const handleTileSelect = (index: number) => {
@@ -525,16 +694,78 @@ function App() {
 
       if (placedPosition) {
         setTilesPlacedThisTurn(prev => [...prev, placedPosition!]);
+        
+        // Calculate fall distance (number of rows fallen)
+        const fallDistance = placedPosition.y;
+        
+        // Calculate variable duration based on fall distance
+        // 1 row = 0.2s, 6 rows = 0.5s (linear interpolation)
+        const duration = 0.2 + (fallDistance * (0.5 - 0.2) / 6);
+        
+        // Calculate stagger delay for tiles in same column
+        const column = placedPosition.x;
+        const columnQueue = columnFallQueue.current.get(column) || [];
+        const delay = columnQueue.length * 0.3; // 300ms delay between tiles in same column
+        
+        // Add to column queue
+        columnFallQueue.current.set(column, [...columnQueue, placedPosition]);
+        
+        // Store tile data for animation
+        const tileKey = `${placedPosition.x}-${placedPosition.y}`;
+        const finalPlacedPosition = placedPosition; // Capture for closure
+        setFallingTileData(prev => {
+          const newMap = new Map(prev);
+          newMap.set(tileKey, {
+            y: finalPlacedPosition.y,
+            column: finalPlacedPosition.x,
+            delay: delay,
+            duration: duration
+          });
+          return newMap;
+        });
+        
         // Add falling animation
-        setFallingTiles(prev => new Set(prev).add(`${placedPosition!.x}-${placedPosition!.y}`));
+        setFallingTiles(prev => new Set(prev).add(tileKey));
+        
+        // Play sound when tile lands (at 70% of animation, when it hits the bottom)
+        const landingTime = (delay + duration * 0.7) * 1000; // 70% of animation = landing
+        setTimeout(() => {
+          playTileDropSound(soundEnabled);
+          // Trigger bottom row shake if falling more than 4 rows (when tile actually lands)
+          if (fallDistance > 4) {
+            setBottomRowShake(prev => new Set(prev).add(column));
+            setTimeout(() => {
+              setBottomRowShake(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(column);
+                return newSet;
+              });
+            }, 300);
+          }
+        }, landingTime);
+        
         // Remove animation class after animation completes
+        const totalTime = (delay + duration) * 1000 + 50; // Add 50ms buffer
         setTimeout(() => {
           setFallingTiles(prev => {
             const newSet = new Set(prev);
-            newSet.delete(`${placedPosition!.x}-${placedPosition!.y}`);
+            newSet.delete(tileKey);
             return newSet;
           });
-        }, 500);
+          setFallingTileData(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(tileKey);
+            return newMap;
+          });
+          // Remove from column queue
+          const updatedQueue = columnFallQueue.current.get(column) || [];
+          const filteredQueue = updatedQueue.filter(p => `${p.x}-${p.y}` !== tileKey);
+          if (filteredQueue.length === 0) {
+            columnFallQueue.current.delete(column);
+      } else {
+            columnFallQueue.current.set(column, filteredQueue);
+          }
+        }, totalTime);
 
         // If this is a blank tile, show modal to enter letter
         const placedTile = state.board[placedPosition.y][placedPosition.x];
@@ -605,49 +836,244 @@ function App() {
     }
 
     try {
-      const removedTile = engine.removeTile(x, y);
-      if (removedTile) {
-        // Return tile to rack (without playerId)
-        const tileToReturn = { letter: removedTile.letter, points: removedTile.points };
-        currentPlayer.rack.push(tileToReturn);
+      // Get the tile before removal (for returning to rack)
+      const tileToRemove = state.board[y][x];
+      if (!tileToRemove) {
+        return;
+      }
+      
+      // Calculate direction to rack for animation
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        const rackElement = document.querySelector('.rack-container');
+        const cellElement = document.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+        
+        let dx = -200; // Default: fly left
+        let dy = -300; // Default: fly up
+        
+        if (rackElement && cellElement) {
+          const rackRect = rackElement.getBoundingClientRect();
+          const cellRect = (cellElement as HTMLElement).getBoundingClientRect();
+          dx = rackRect.left + rackRect.width / 2 - (cellRect.left + cellRect.width / 2);
+          dy = rackRect.top + rackRect.height / 2 - (cellRect.top + cellRect.height / 2);
+        }
+        
+        // Trigger removal animation
+        const tileKey = `${x}-${y}`;
+        setRemovingTiles(prev => new Set(prev).add(tileKey));
+        setRemovingTileData(prev => {
+          const newMap = new Map(prev);
+          newMap.set(tileKey, { dx, dy });
+          return newMap;
+        });
+        
+        // Force a re-render to show the animation
+        setRenderKey(prev => prev + 1);
+        
+        // After animation completes, actually remove the tile
+        setTimeout(() => {
+          const removedTile = engine.removeTile(x, y);
+        if (removedTile) {
+          // Return tile to rack (without playerId)
+          const tileToReturn = { letter: removedTile.letter, points: removedTile.points };
+          currentPlayer.rack.push(tileToReturn);
 
-        // Remove from tilesPlacedThisTurn if it was tracked there
-        // After gravity, tiles above the removed tile have moved down
+          // Remove from tilesPlacedThisTurn if it was tracked there
+          // After gravity, tiles above the removed tile have moved down
+          setTilesPlacedThisTurn(prev => {
+            return prev
+              .filter(pos => !(pos.x === x && pos.y === y)) // Remove the deleted tile
+              .map(pos => {
+                // If tile is in same column and above removed position, it moved down
+                if (pos.x === x && pos.y < y) {
+                  return { x: pos.x, y: pos.y + 1 };
+                }
+                return pos;
+              });
+          });
+
+          // Also remove any selected words that contain this position
+          // And update positions in selected words after gravity
+          setSelectedWords(prev => prev
+            .filter(wordPositions =>
+              !wordPositions.some(pos => pos.x === x && pos.y === y)
+            )
+            .map(wordPositions =>
+              wordPositions.map(pos => {
+                // If position is in same column and above removed position, it moved down
+                if (pos.x === x && pos.y < y) {
+                  return { x: pos.x, y: pos.y + 1 };
+                }
+                return pos;
+              })
+            )
+          );
+          
+          // Clear removal animation
+          setRemovingTiles(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(tileKey);
+            return newSet;
+          });
+          setRemovingTileData(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(tileKey);
+            return newMap;
+          });
+          
+          // Force re-render
+          setRenderKey(prev => prev + 1);
+          console.log('Tile removed and returned to rack:', { x, y, tile: removedTile });
+        }
+      }, 500); // Match animation duration
+      }); // Close requestAnimationFrame
+    } catch (error) {
+      console.error('Error removing tile:', error);
+      showError(`Error removing tile: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Handle moving a tile within the board (reordering)
+  const handleTileMove = (fromX: number, fromY: number, toX: number, toY: number) => {
+    // Multiplayer mode: emit socket event
+    if (isMultiplayer) {
+      // TODO: Implement socket event for tile move
+      console.log('📤 Multiplayer: tile move not yet implemented', { fromX, fromY, toX, toY });
+      return;
+    }
+
+    if (!gameManager || !engine) return;
+
+    const currentPlayer = gameManager.getCurrentPlayer();
+    const state = engine.getState();
+    const tile = state.board[fromY][fromX];
+
+    // Check if tile exists and belongs to current player
+    if (!tile) {
+      return;
+    }
+
+    if (tile.playerId !== currentPlayer.id) {
+      showError('You can only move your own tiles.');
+      return;
+    }
+
+    // Check if it's the current player's turn
+    if (state.currentPlayerId !== currentPlayer.id) {
+      showError('You can only move tiles during your turn.');
+      return;
+    }
+
+    // Only allow moving tiles placed in THIS turn
+    const wasPlacedThisTurn = tilesPlacedThisTurn.some(pos => pos.x === fromX && pos.y === fromY);
+    if (!wasPlacedThisTurn) {
+      showError('You can only move tiles placed this turn.');
+      return;
+    }
+
+    // Don't allow moving to the same position
+    if (fromX === toX && fromY === toY) {
+      return;
+    }
+
+    try {
+      // Get state before removal to compare
+      const prevState = engine.getState();
+      
+      // Remove tile from current position (this will apply gravity to tiles above)
+      const removedTile = engine.removeTile(fromX, fromY);
+      if (removedTile) {
+        // Update tilesPlacedThisTurn to reflect removal and gravity
         setTilesPlacedThisTurn(prev => {
           return prev
-            .filter(pos => !(pos.x === x && pos.y === y)) // Remove the deleted tile
+            .filter(pos => !(pos.x === fromX && pos.y === fromY))
             .map(pos => {
               // If tile is in same column and above removed position, it moved down
-              if (pos.x === x && pos.y < y) {
+              if (pos.x === fromX && pos.y < fromY) {
                 return { x: pos.x, y: pos.y + 1 };
               }
               return pos;
             });
         });
 
-        // Also remove any selected words that contain this position
-        // And update positions in selected words after gravity
-        setSelectedWords(prev => prev
-          .filter(wordPositions =>
-            !wordPositions.some(pos => pos.x === x && pos.y === y)
-          )
-          .map(wordPositions =>
-            wordPositions.map(pos => {
-              // If position is in same column and above removed position, it moved down
-              if (pos.x === x && pos.y < y) {
-                return { x: pos.x, y: pos.y + 1 };
-              }
-              return pos;
-            })
-          )
-        );
+        // Place tile at new position (will apply gravity)
+        engine.placeTiles([{ column: toX, tile: removedTile }], currentPlayer.id);
+        
+        // Get state after placement to find where tile landed
+        const newState = engine.getState();
+        let finalPos: Position | null = null;
+        
+        // Find the newly placed tile by comparing board states
+        for (let row = 6; row >= 0; row--) {
+          const boardTile = newState.board[row][toX];
+          const prevTile = prevState.board[row][toX];
+          // If there's a tile now that wasn't there before, or it's a new tile by this player
+          if (boardTile && (!prevTile || (prevTile.playerId !== currentPlayer.id && boardTile.playerId === currentPlayer.id))) {
+            finalPos = { x: toX, y: row };
+            break;
+          }
+        }
+        
+        if (finalPos) {
+          // Update tilesPlacedThisTurn with new position
+          setTilesPlacedThisTurn(prev => [...prev, finalPos!]);
+          
+          // Trigger falling animation for the moved tile
+          const fallDistance = finalPos.y;
+          const duration = 0.2 + (fallDistance * (0.5 - 0.2) / 6);
+          const tileKey = `${finalPos.x}-${finalPos.y}`;
+          
+          setFallingTileData(prev => {
+            const newMap = new Map(prev);
+            newMap.set(tileKey, {
+              y: finalPos!.y,
+              column: finalPos!.x,
+              delay: 0,
+              duration: duration
+            });
+            return newMap;
+          });
+          
+          setFallingTiles(prev => new Set(prev).add(tileKey));
+          
+          // Play sound when tile lands (at 70% of animation, when it hits the bottom)
+          const landingTime = duration * 0.7 * 1000; // 70% of animation = landing
+          setTimeout(() => {
+            playTileDropSound(soundEnabled);
+            // Trigger bottom row shake if falling more than 4 rows (when tile actually lands)
+            if (fallDistance > 4) {
+              setBottomRowShake(prev => new Set(prev).add(toX));
+              setTimeout(() => {
+                setBottomRowShake(prev => {
+                  const newSet = new Set(prev);
+                  newSet.delete(toX);
+                  return newSet;
+                });
+              }, 300);
+            }
+          }, landingTime);
+          
+          setTimeout(() => {
+            setFallingTiles(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(tileKey);
+              return newSet;
+            });
+            setFallingTileData(prev => {
+              const newMap = new Map(prev);
+              newMap.delete(tileKey);
+              return newMap;
+            });
+          }, (duration * 1000) + 50);
+        }
+        
         // Force re-render
         setRenderKey(prev => prev + 1);
-        console.log('Tile removed and returned to rack:', { x, y, tile: removedTile });
+        console.log('Tile moved:', { fromX, fromY, toX, toY, tile: removedTile, finalPos });
       }
     } catch (error) {
-      console.error('Error removing tile:', error);
-      showError(`Error removing tile: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error moving tile:', error);
+      showError(`Error moving tile: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -892,7 +1318,7 @@ function App() {
 
         const claims: WordClaim[] = validWords.map(positions => ({
           positions,
-          playerId: currentPlayer.id
+            playerId: currentPlayer.id
         }));
 
         console.log('Processing word claims:', {
@@ -907,12 +1333,12 @@ function App() {
           showError('Dictionary not loaded yet. Please wait...');
           return;
         }
-
+          
         const result = await engine.processWordClaims(claims, allNewlyPlacedTiles, dictionary);
 
         console.log('Word claims result:', result);
-
-        if (!result.valid) {
+          
+          if (!result.valid) {
           // Collect all error messages, filtering out undefined values
           const errorMessages = result.results
             .map(r => r.error)
@@ -923,9 +1349,9 @@ function App() {
           } else {
             showError('Invalid word claims. Please check your word selection.');
           }
-          return;
-        }
-
+            return;
+          }
+          
         console.log('Word claims validated successfully! Score:', result.totalScore);
 
         // Check for bonuses and trigger animations sequentially
@@ -1095,6 +1521,8 @@ function App() {
       setTilesPlacedThisTurn([]);
       setPendingPlacements([]);
       setSelectedTiles([]);
+      // Clear column fall queue when turn ends
+      columnFallQueue.current.clear();
         
         // Check win condition
         const winnerId = engine.checkWinCondition();
@@ -1105,8 +1533,8 @@ function App() {
         
       // Force re-render by updating render key
       setRenderKey(prev => prev + 1);
-
-    } catch (error) {
+        
+      } catch (error) {
       console.error('Error submitting move:', error);
       showError('Error: ' + (error as Error).message);
     }
@@ -1149,27 +1577,27 @@ function App() {
       } else {
         // Local game: use engine
         if (!gameManager || !engine) return;
-
-        const currentPlayer = gameManager.getCurrentPlayer();
+    
+    const currentPlayer = gameManager.getCurrentPlayer();
 
         // Perform the swap
-        engine.swapTiles(currentPlayer.id, selectedTiles);
+    engine.swapTiles(currentPlayer.id, selectedTiles);
 
         // Clear selections
-        setSelectedTiles([]);
+    setSelectedTiles([]);
         setShowSwapConfirm(false);
 
         // Advance turn (player loses turn for swapping)
-        engine.advanceTurn();
+    engine.advanceTurn();
 
         // Clear all turn state
         setSelectedWords([]);
         setTilesPlacedThisTurn([]);
         setPendingPlacements([]);
-        
-        // Force re-render
-        setGameManager(gameManager);
-        setEngine(engine);
+    
+    // Force re-render
+    setGameManager(gameManager);
+    setEngine(engine);
         setRenderKey(prev => prev + 1);
 
         console.log('Tiles swapped, turn advanced');
@@ -1394,50 +1822,68 @@ function App() {
 
   return (
     <div className="game-container" key={renderKey}>
-      <Navbar currentPlayerName={isMyTurn ? `Your turn (${myPlayer.name})` : `${turnIndicatorName}'s turn`} />
+      <Navbar 
+        currentPlayerName={isMyTurn ? `Your turn (${myPlayer.name})` : `${turnIndicatorName}'s turn`}
+        onStartNewGame={handleStartNewGame}
+        onClearBoard={handleClearBoard}
+        onToggleSound={handleToggleSound}
+        soundEnabled={soundEnabled}
+      />
       <ScoreArea players={state.players} currentPlayerId={state.currentPlayerId} />
+      <div className="board-and-words-container">
+        <div className="board-container">
       <Board 
         board={state.board}
         selectedPositions={selectedWordPositions}
         isPlacingTiles={isPlacingTiles}
-        onColumnClick={isMyTurn ? handleColumnClick : () => { }}
-        onTileDrop={isMyTurn ? handleTileDrop : () => { }}
-        onTileRemove={isMyTurn ? handleTileRemove : () => { }}
-        fallingTiles={fallingTiles}
-        currentPlayerId={myPlayer.id}
-        onWordSelect={isMyTurn ? handleWordSelect : () => { }}
-        tilesPlacedThisTurn={finalTilesPlacedThisTurn}
-        onBlankTileEdit={isMyTurn ? handleBlankTileEdit : () => { }}
-        palindromeTiles={palindromeTiles}
-        emordnilapTiles={emordnilapTiles}
-        emordnilapPositions={emordnilapPositions}
-        diagonalTiles={diagonalTiles}
-        diagonalPositions={diagonalPositions}
+            onColumnClick={isMyTurn ? handleColumnClick : () => { }}
+            onTileDrop={isMyTurn ? handleTileDrop : () => { }}
+            onTileRemove={isMyTurn ? handleTileRemove : () => { }}
+            fallingTiles={fallingTiles}
+            fallingTileData={fallingTileData}
+            removingTiles={removingTiles}
+            removingTileData={removingTileData}
+            bottomRowShake={bottomRowShake}
+            currentPlayerId={myPlayer.id}
+            onWordSelect={isMyTurn ? handleWordSelect : () => { }}
+            tilesPlacedThisTurn={finalTilesPlacedThisTurn}
+            onTileMove={isMyTurn ? handleTileMove : undefined}
+            onBlankTileEdit={isMyTurn ? handleBlankTileEdit : () => { }}
+            palindromeTiles={palindromeTiles}
+            emordnilapTiles={emordnilapTiles}
+            emordnilapPositions={emordnilapPositions}
+            diagonalTiles={diagonalTiles}
+            diagonalPositions={diagonalPositions}
       />
+        </div>
+        <WordsPanel claimedWords={state.claimedWords} players={state.players} className="desktop-words-panel" />
+      </div>
+      <div className="rack-and-actions-container">
       <Rack 
-        tiles={myPlayer.rack}
+          tiles={myPlayer.rack}
         selectedIndices={selectedTiles}
         onTileClick={handleTileSelect}
-        onTileDragStart={(index, tile) => {
-          // Optional: visual feedback when dragging starts
-        }}
-        playerId={myPlayer.id}
-        disabled={!isMyTurn}
+          onTileDragStart={(index, tile) => {
+            // Optional: visual feedback when dragging starts
+          }}
+          playerId={myPlayer.id}
+          disabled={!isMyTurn}
       />
       <ActionButtons
-        canSubmit={tilesPlacedThisTurn.length > 0 || pendingPlacements.length > 0 || selectedWords.length > 0}
+          canSubmit={tilesPlacedThisTurn.length > 0 || pendingPlacements.length > 0 || selectedWords.length > 0}
         onSubmit={handleSubmitMove}
         onSwap={handleSwapTiles}
         canSwap={selectedTiles.length > 0}
-        recognizedWords={recognizedWords}
-        hasWordSelected={selectedWords.length > 0}
-        selectedTilesCount={selectedTiles.length}
-        onClearSelection={() => {
-          setSelectedWords([]);
-          setRenderKey(prev => prev + 1);
-        }}
+          recognizedWords={recognizedWords}
+          hasWordSelected={selectedWords.length > 0}
+          selectedTilesCount={selectedTiles.length}
+          onClearSelection={() => {
+            setSelectedWords([]);
+            setRenderKey(prev => prev + 1);
+          }}
       />
-      <WordsPanel claimedWords={state.claimedWords} players={state.players} />
+      </div>
+      <WordsPanel claimedWords={state.claimedWords} players={state.players} className="mobile-words-panel" />
       <ErrorModal
         isOpen={errorModal.isOpen}
         message={errorModal.message}
@@ -1484,6 +1930,20 @@ function App() {
           onComplete={() => setDiagonalBonus(null)}
         />
       )}
+      <NewGameRequestModal
+        isOpen={newGameRequestModal.isOpen}
+        mode={newGameRequestModal.mode}
+        requesterName={newGameRequestModal.requesterName}
+        declinedPlayerName={newGameRequestModal.declinedPlayerName}
+        onAccept={handleAcceptNewGame}
+        onDecline={handleDeclineNewGame}
+        onClose={() => {
+          setNewGameRequestModal({ isOpen: false, mode: null });
+          if (newGameRequestModal.mode === 'request_received') {
+            clearNewGameRequest();
+          }
+        }}
+      />
     </div>
   );
 }

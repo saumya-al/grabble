@@ -44,6 +44,8 @@ export interface ClientToServerEvents {
     end_turn: () => void;
     remove_tile: (data: { column: number; row: number }) => void;
     set_blank_letter: (data: { x: number; y: number; letter: string }) => void;
+    request_new_game: () => void;
+    respond_new_game: (data: { accepted: boolean }) => void;
 }
 
 /**
@@ -65,6 +67,11 @@ export interface ServerToClientEvents {
     turn_changed: (data: { currentPlayerId: number; gameState: GameState }) => void;
     game_ended: (data: { winnerId: number; finalState: GameState }) => void;
     blank_letter_set: (data: { x: number; y: number; letter: string; gameState: GameState }) => void;
+    new_game_requested: (data: { requesterId: string; requesterName: string }) => void;
+    new_game_request_sent: () => void;
+    new_game_response: (data: { playerId: string; playerName: string; accepted: boolean }) => void;
+    new_game_all_accepted: (data: { gameState: GameState }) => void;
+    new_game_declined: (data: { playerName: string }) => void;
     error: (data: { message: string; code?: string }) => void;
 }
 

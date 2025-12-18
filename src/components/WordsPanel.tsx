@@ -5,16 +5,17 @@ import { getPlayerColor } from '../utils/playerColors';
 interface WordsPanelProps {
   claimedWords: ClaimedWord[];
   players: Player[];
+  className?: string;
 }
 
-const WordsPanel: React.FC<WordsPanelProps> = ({ claimedWords, players }) => {
+const WordsPanel: React.FC<WordsPanelProps> = ({ claimedWords, players, className }) => {
   const getPlayerName = (playerId: number): string => {
     const player = players.find(p => p.id === playerId);
     return player ? player.name : `Player ${playerId + 1}`;
   };
 
   return (
-    <div className="words-panel">
+    <div className={`words-panel ${className || ''}`}>
       <h3>Claimed Words</h3>
       <div className="words-list">
         {claimedWords.length === 0 ? (
