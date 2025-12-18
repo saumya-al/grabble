@@ -1,138 +1,141 @@
 # Grabble
 
-Scrabble with Gravity - A turn-based multiplayer word game built with React and TypeScript.
+🎮 Scrabble with Gravity - A turn-based multiplayer word game built with React and TypeScript.
+
+**[Play Live Demo →](https://saumyamishraal.github.io/grabble/)**
 
 ## Overview
 
-Grabble is played on a 7×7 grid where players drop tiles from column tops. Gravity resolves after placement, and players explicitly claim words for scoring. First player to reach the target score (default 100) wins!
+Grabble is played on a 7×7 grid where players drop tiles from column tops. Gravity resolves after placement, and players claim words for scoring. First player to reach the target score wins!
+
+## Game Modes
+
+- **🏠 Local Mode**: Play on a single device (hot-seat multiplayer)
+- **🌐 Multiplayer Mode**: Real-time online play via Socket.IO
 
 ## Features
 
-- 🎮 Turn-based multiplayer (2-4 players)
+- 🎮 2-4 players (local or online)
 - 📱 Mobile-first responsive design
 - 🎯 Gravity mechanics - tiles fall straight down
-- 📝 Explicit word claiming - players highlight words themselves
-- 🏆 Scoring with bonuses (diagonal, palindrome, emordnilap)
-- 📚 Dictionary validation from text file
-- ⚛️ Built with React and TypeScript
+- 📝 Drag-to-select word claiming
+- 🏆 Scoring with bonuses (diagonal ×2, palindrome ×2, emordnilap ×2)
+- 🔤 Blank tiles (wildcards)
+- 📚 Dictionary validation (78,000+ words)
+- ⚛️ React + TypeScript + Socket.IO
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 - Node.js 16+ and npm
 
-### Installation
+### Local Game Only (Single Device)
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/saumyamishraal/grabble.git
-   cd grabble
-   ```
+```bash
+# Install dependencies
+npm install
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+# Start frontend
+npm start
+```
+Opens at http://localhost:3000 → Click **"Play Local"**
 
-3. **Add dictionary file** (optional):
-   - Create `public/dictionary.txt` with one word per line
-   - If missing, a fallback dictionary will be used
+### Multiplayer (Online)
 
-4. **Start the development server**:
-   ```bash
-   npm start
-   ```
-   Opens at http://localhost:3000
+```bash
+# Terminal 1: Start frontend
+npm start
 
-5. **Build for production**:
-   ```bash
-   npm run build
-   ```
+# Terminal 2: Start server
+cd server
+npm install
+npx ts-node index.ts
+```
+- Frontend: http://localhost:3000
+- Server: http://localhost:3001
+
+---
 
 ## How to Play
 
-1. **Setup**: Enter player names (2-4 players) and target score
-2. **Your Turn**: 
-   - Click tiles in your rack to select them
-   - Click a column header (top row) to drop selected tiles
-   - Gravity resolves automatically
-   - Click cells on the board to highlight words
-   - Click "Submit Move" to validate and score words
-3. **Scoring**: Words score points based on letter values + bonuses
-4. **Win**: First player to reach target score wins!
+1. **Setup**: Choose Local or Multiplayer mode
+2. **Place Tiles**: Drag tiles from rack to any column (gravity applies)
+3. **Select Words**: Drag across board tiles to select words
+4. **Submit**: Click "Submit Move" to score selected words
+5. **Win**: First to reach target score wins!
+
+### Controls
+| Action | How |
+|--------|-----|
+| Place tile | Drag from rack to board |
+| Remove tile | Click placed tile (your own, current turn only) |
+| Select word | Drag across tiles on board |
+| Swap tiles | Select rack tiles → click "Swap" |
+
+---
 
 ## Game Rules
 
-- **Tile Placement**: Drop tiles from column tops (row 0)
-- **Gravity**: Tiles fall straight down after placement
-- **Word Claiming**: Players must explicitly highlight words
-- **Word Requirements**: 
-  - Must be 3+ letters
-  - Must be in dictionary
-  - Must be a straight line (horizontal/vertical/diagonal)
-  - Must contain at least one newly placed tile
-- **Bonuses**:
-  - Diagonal words: ×2
-  - Palindromes: ×2
-  - Emordnilaps: ×2 (reverses to different valid word)
-  - Bonuses stack multiplicatively
+- **Tiles fall** with gravity after placement
+- **Words must be:**
+  - 3+ letters
+  - In dictionary
+  - Straight line (horizontal/vertical/diagonal)
+  - Include at least one tile placed this turn
+- **Bonuses stack multiplicatively:**
+  - Diagonal: ×2
+  - Palindrome: ×2
+  - Emordnilap: ×2 (reverse is different valid word)
+
+---
 
 ## Project Structure
 
 ```
 grabble/
-├── src/
-│   ├── components/        # React UI components
-│   │   ├── SetupModal.tsx
-│   │   ├── Board.tsx
-│   │   ├── Rack.tsx
-│   │   └── ...
-│   ├── game-engine/       # Core game logic
-│   │   ├── game-engine.ts
-│   │   ├── game-state-manager.ts
-│   │   └── ...
-│   ├── App.tsx           # Main app component
-│   └── styles.scss       # Game styles
-├── public/
-│   └── dictionary.txt    # Word dictionary (add your own)
-├── README.md
-└── ARCHITECTURE.md       # Detailed architecture documentation
+├── src/                      # React Frontend
+│   ├── components/           # UI components (11 total)
+│   ├── hooks/useSocket.ts    # Socket.IO client hook
+│   ├── game-engine.ts        # Core game logic
+│   ├── game-state-manager.ts # Game lifecycle
+│   └── App.tsx               # Main app
+├── server/                   # Node.js Server
+│   ├── index.ts              # Express + Socket.IO
+│   ├── socket-events.ts      # Event handlers
+│   └── room-manager.ts       # Lobby management
+├── public/dictionary.txt     # 78,000+ words
+└── ARCHITECTURE.md           # Detailed docs
 ```
+
+---
 
 ## Development
 
-### Available Scripts
+```bash
+# Frontend dev server
+npm start
 
-- `npm start` - Start development server
-- `npm run build` - Build for production
-- `npm test` - Run tests
-- `npm run eject` - Eject from Create React App
+# Server (in /server directory)
+npx ts-node index.ts
 
-### Adding Features
-
-- **UI Components**: Add to `src/components/`
-- **Game Logic**: Modify `src/game-engine/`
-- **Styling**: Update `src/styles.scss`
-
-## Dictionary Format
-
-The dictionary file (`public/dictionary.txt`) should contain one word per line:
-```
-CAT
-DOG
-BAT
-RAT
-...
+# Build for production
+npm run build
 ```
 
-Words are automatically:
-- Converted to uppercase
-- Filtered to 3+ letters only
-- Validated as letters only
+---
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed architecture documentation.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for:
+- System architecture diagrams
+- All React components explained
+- Game engine methods (25+)
+- Socket events reference
+- Scoring system details
+
+---
 
 ## License
 
@@ -140,4 +143,4 @@ ISC
 
 ## Contributing
 
-Contributions welcome! Please feel free to submit a Pull Request.
+Contributions welcome! Please submit a Pull Request.
