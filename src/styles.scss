@@ -25,6 +25,60 @@
     }
 }
 
+/* Palindrome mirror/flip animation */
+@keyframes palindromeFlip {
+    0%, 100% {
+        transform: scaleX(1);
+    }
+    50% {
+        transform: scaleX(-1);
+    }
+}
+
+/* Emordnilap wave animation - tiles fully exchange positions, then return */
+/* Tiles move to their reverse positions (0-40%), hold (40-60%), then return (60-100%) */
+@keyframes emordnilapWave {
+    0% {
+        transform: translate(0, 0);
+        box-shadow: 0 0 10px rgba(138, 43, 226, 0.4);
+    }
+    40% {
+        /* Fully swap positions - tiles reach their reverse positions */
+        /* Use pre-calculated translate values to handle negative values correctly */
+        transform: translate(var(--emordnilap-translate-x, 0px), var(--emordnilap-translate-y, 0px));
+        box-shadow: 0 0 30px rgba(138, 43, 226, 0.9);
+    }
+    60% {
+        /* Hold at swapped positions */
+        transform: translate(var(--emordnilap-translate-x, 0px), var(--emordnilap-translate-y, 0px));
+        box-shadow: 0 0 30px rgba(138, 43, 226, 0.9);
+    }
+    100% {
+        /* Return to original positions */
+        transform: translate(0, 0);
+        box-shadow: 0 0 10px rgba(138, 43, 226, 0.4);
+    }
+}
+
+/* Diagonal sweep animation - tiles light up sequentially along diagonal */
+@keyframes diagonalSweep {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 10px rgba(34, 139, 34, 0.3);
+        filter: brightness(1);
+    }
+    50% {
+        transform: scale(1.15);
+        box-shadow: 0 0 30px rgba(34, 139, 34, 0.9);
+        filter: brightness(1.4);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 10px rgba(34, 139, 34, 0.3);
+        filter: brightness(1);
+    }
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: #ffffff;
@@ -230,6 +284,29 @@ textarea,
 
             &.falling {
                 animation: tileFall 0.5s ease-in;
+            }
+
+            &.palindrome {
+                animation: palindromeFlip 1s ease-in-out;
+                box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+            }
+
+            &.emordnilap {
+                animation: emordnilapWave 2s ease-in-out;
+                box-shadow: 0 0 20px rgba(138, 43, 226, 0.6);
+                /* Disable transition and hover transform during animation */
+                transition: none !important;
+                
+                &:hover {
+                    /* Disable hover transform during animation */
+                    transform: none !important;
+                }
+            }
+
+            &.diagonal {
+                animation: diagonalSweep 1.5s ease-in-out;
+                animation-delay: var(--diagonal-delay, 0s);
+                box-shadow: 0 0 20px rgba(34, 139, 34, 0.6);
             }
 
             &.removable {
@@ -529,6 +606,85 @@ textarea,
                 border-color: #d0d0d0;
             }
         }
+    }
+}
+
+/* Bonus Overlay Styles */
+.bonus-overlay {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 10000;
+    max-width: 90vw;
+    animation: bonusFadeIn 0.3s ease-in, bonusFadeOut 0.3s ease-out 2.2s forwards;
+}
+
+.bonus-content {
+    background: rgba(255, 255, 255, 0.92);
+    border: 3px solid;
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    transform: scale(1);
+    animation: bonusScale 0.5s ease-out;
+    backdrop-filter: blur(4px);
+}
+
+.bonus-text {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    line-height: 1.2;
+}
+
+.bonus-points {
+    font-size: 1.1rem;
+    font-weight: bold;
+    margin-top: 0.25rem;
+}
+
+.bonus-words {
+    font-size: 1rem !important;
+    margin-top: 0.25rem !important;
+    font-style: italic;
+    line-height: 1.2;
+}
+
+@keyframes bonusFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes bonusFadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes bonusScale {
+    0% {
+        transform: scale(0.8);
+    }
+    50% {
+        transform: scale(1.1);
+    }
+    100% {
+        transform: scale(1);
     }
 }
 

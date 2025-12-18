@@ -338,7 +338,16 @@ export function setupSocketEvents(
                 console.log('Validation result:', JSON.stringify(result));
 
                 if (!result.valid) {
-                    socket.emit('error', { message: 'Invalid word claims: ' + result.results.map(r => r.error).join(', ') });
+                    // Collect all error messages, filtering out undefined values
+                    const errorMessages = result.results
+                        .map(r => r.error)
+                        .filter((error): error is string => error !== undefined && error.length > 0);
+                    
+                    if (errorMessages.length > 0) {
+                        socket.emit('error', { message: 'Invalid word claims: ' + errorMessages.join('. ') });
+                    } else {
+                        socket.emit('error', { message: 'Invalid word claims. Please check your word selection.' });
+                    }
                     return;
                 }
 
@@ -497,6 +506,7 @@ export function setupSocketEvents(
          * Remove a tile
          */
         socket.on('remove_tile', async ({ column, row }) => {
+            console.log(`🗑️ Remove tile request: column=${column}, row=${row}, socket=${socket.id}`);
             const room = roomManager.getRoomByPlayer(socket.id);
             if (!room || room.status !== 'playing') {
                 socket.emit('error', { message: 'Game not in progress' });
@@ -526,15 +536,32 @@ export function setupSocketEvents(
                 const tile = state.board[row][column];
 
                 if (!tile) {
+                    console.log(`❌ Tile not found at (${column}, ${row})`);
                     // Tile might already be gone
                     return;
                 }
 
                 // Verify ownership
                 if (tile.playerId !== playerId) {
+                    console.log(`❌ Tile ownership mismatch: tile.playerId=${tile.playerId}, playerId=${playerId}`);
                     socket.emit('error', { message: 'You can only remove your own tiles' });
                     return;
                 }
+
+                // Verify tile was placed this turn (can only remove tiles placed in current turn)
+                // Note: After gravity, tiles move down, so we check if ANY tile in this column
+                // was placed this turn, and if the tile at this position belongs to the player
+                const tilesPlacedThisTurn = playerTurnTiles.get(socket.id) || [];
+                console.log(`📍 Tiles placed this turn:`, tilesPlacedThisTurn);
+                // Check if any tile in this column was placed this turn
+                const tileInColumnPlacedThisTurn = tilesPlacedThisTurn.some(pos => pos.x === column);
+                if (!tileInColumnPlacedThisTurn) {
+                    console.log(`❌ No tile in column ${column} was placed this turn`);
+                    socket.emit('error', { message: 'You can only remove tiles placed this turn' });
+                    return;
+                }
+                
+                console.log(`✅ Validation passed, removing tile at (${column}, ${row})`);
 
                 // Remove the tile
                 const removedTile = gameEngine.removeTile(column, row);
@@ -545,17 +572,27 @@ export function setupSocketEvents(
                     const newState = manager.getState();
                     roomManager.updateGameState(room.code, newState);
 
+                    // Update turn tracking: remove the deleted position and adjust positions above it
+                    // After gravity, tiles above the removed tile move down by 1 row
+                    const current = playerTurnTiles.get(socket.id);
+                    if (current) {
+                        const updated = current
+                            .filter(p => !(p.x === column && p.y === row)) // Remove deleted tile
+                            .map(p => {
+                                // If tile is in same column and above removed position, it moved down
+                                if (p.x === column && p.y < row) {
+                                    return { x: p.x, y: p.y + 1 };
+                                }
+                                return p;
+                            });
+                        playerTurnTiles.set(socket.id, updated);
+                    }
+
                     io.to(room.code).emit('tile_removed', {
                         playerId: socket.id,
                         gameState: newState,
                         removedPosition: { x: column, y: row }
                     });
-
-                    // Remove from turn tracking
-                    const current = playerTurnTiles.get(socket.id);
-                    if (current) {
-                        playerTurnTiles.set(socket.id, current.filter(p => !(p.x === column && p.y === row)));
-                    }
                 }
             } catch (error: any) {
                 socket.emit('error', { message: error.message });
