@@ -6,7 +6,7 @@
 
 import type { Tile, Position, TilePlacement, WordClaim, ClaimedWord, GameState, Player } from './types';
 import { STANDARD_SCRABBLE_DISTRIBUTION } from './types';
-import { isValidWordLine, extractWordFromPositions, getReverseWord, containsNewTile, findAllWords, areWordsSameDirection, isSubstringWord } from './word-detection';
+import { isValidWordLine, extractWordFromPositions, getReverseWord, containsNewTile } from './word-detection';
 
 /**
  * Core game engine for Grabble
@@ -99,45 +99,6 @@ export class GrabbleEngine {
     }
 
     /**
-     * Place a tile directly at a specific position (without gravity)
-     * Used for dropping tiles anywhere on the board
-     */
-    placeTileAtPosition(x: number, y: number, tile: Tile, playerId: number): void {
-        if (x < 0 || x >= 7 || y < 0 || y >= 7) {
-            throw new Error(`Invalid position: (${x}, ${y})`);
-        }
-
-        if (this.state.board[y][x] !== null) {
-            throw new Error(`Position (${x}, ${y}) is already occupied`);
-        }
-
-        this.state.board[y][x] = {
-            ...tile,
-            playerId
-        };
-    }
-
-    /**
-     * Remove a tile from the board at the given position
-     * Returns the removed tile or null if position was empty
-     */
-    removeTile(x: number, y: number): Tile | null {
-        if (x < 0 || x >= 7 || y < 0 || y >= 7) {
-            throw new Error(`Invalid position: (${x}, ${y})`);
-        }
-
-        const tile = this.state.board[y][x];
-        if (tile === null) {
-            return null;
-        }
-
-        this.state.board[y][x] = null;
-        // Resolve gravity after removal
-        this.resolveGravity();
-        return tile;
-    }
-
-    /**
      * Resolve gravity - tiles fall straight down until they hit bottom or another tile
      */
     private resolveGravity(): void {
@@ -163,6 +124,30 @@ export class GrabbleEngine {
     }
 
     /**
+     * Remove a tile from the board at the specified position
+     * Applies gravity after removal (tiles above fall down)
+     * Returns the removed tile, or null if no tile was at that position
+     */
+    removeTile(x: number, y: number): Tile | null {
+        if (x < 0 || x >= 7 || y < 0 || y >= 7) {
+            return null;
+        }
+
+        const tile = this.state.board[y][x];
+        if (tile === null) {
+            return null;
+        }
+
+        // Remove the tile
+        this.state.board[y][x] = null;
+
+        // Apply gravity to the column
+        this.resolveGravity();
+
+        return tile;
+    }
+
+    /**
      * Extract word from board given positions
      * Returns the word string and validates it's a straight line
      */
@@ -178,10 +163,8 @@ export class GrabbleEngine {
             }
         }
 
-        // Extract word - sort positions to get correct reading order (top-to-bottom, left-to-right)
-        const word = extractWordFromPositions(this.state.board, positions, false);
-        const trimmedWord = word.trim().toUpperCase();
-        return { word: trimmedWord, isValid: trimmedWord.length >= 3 };
+        const word = extractWordFromPositions(this.state.board, positions);
+        return { word, isValid: word.length >= 3 };
     }
 
     /**
@@ -195,22 +178,14 @@ export class GrabbleEngine {
     /**
      * Check if word is an emordnilap (reverses to a different valid word)
      * Uses the reverse word from board positions to handle multi-character tiles correctly
-     * Both the original word and the reverse word must be valid dictionary words
      */
     async isEmordnilap(word: string, positions: Position[], dictionary: Set<string>): Promise<boolean> {
-        // First verify the original word is in the dictionary (should already be validated, but double-check)
-        const wordUpper = word.toUpperCase();
-        if (!dictionary.has(wordUpper)) {
-            return false;
-        }
-
         const reverseWord = getReverseWord(this.state.board, positions);
         if (!reverseWord) {
             return false;
         }
         const reverseUpper = reverseWord.toUpperCase();
-
-        // Both words must be different and both must be valid dictionary words
+        const wordUpper = word.toUpperCase();
         return reverseUpper !== wordUpper && dictionary.has(reverseUpper);
     }
 
@@ -277,107 +252,26 @@ export class GrabbleEngine {
             return { valid: false, error: 'Word must be a straight line of 3+ letters' };
         }
 
-        // Word is already uppercase from extractWord
-        const wordUpper = word.toUpperCase().trim();
-        console.log('Validating word claim:', {
-            word,
-            wordUpper,
-            wordLength: wordUpper.length,
-            inDictionary: dictionary.has(wordUpper),
-            dictionarySize: dictionary.size,
-            positions: claim.positions,
-            sampleDictWords: Array.from(dictionary).slice(0, 10)
-        });
-
-        // Check dictionary - ensure we're checking the exact uppercase trimmed word
-        if (!dictionary.has(wordUpper)) {
-            // Try to find similar words for debugging
-            const similarWords = Array.from(dictionary).filter(w =>
-                w.length === wordUpper.length &&
-                w.startsWith(wordUpper[0])
-            ).slice(0, 5);
-            console.log('Word not found. Similar words:', similarWords);
-            return { valid: false, error: `Word "${wordUpper}" not in dictionary` };
+        // Check dictionary
+        if (!dictionary.has(word.toUpperCase())) {
+            return { valid: false, error: 'Word not in dictionary' };
         }
 
-        // Note: We no longer require each word to contain a newly placed tile
-        // As long as the player has placed tiles this turn, they can claim any valid word on the board
-        // This check is now done at processWordClaims level (player must have newlyPlacedTiles.length > 0)
+        // Check if word contains at least one newly placed tile
+        if (!containsNewTile(claim.positions, newlyPlacedTiles)) {
+            return { valid: false, error: 'Word must contain at least one newly placed tile' };
+        }
 
-        // Check if word already claimed (exact same positions)
+        // Check if word already claimed
         const wordAlreadyClaimed = this.state.claimedWords.some(cw => {
-            // Check if word text matches
             if (cw.word.toUpperCase() !== word.toUpperCase()) return false;
-
-            // Check if positions match exactly (same word in same location)
-            if (cw.positions.length !== claim.positions.length) return false;
-
-            // Sort positions for comparison
-            const cwPositionsSorted = [...cw.positions].sort((a, b) => {
-                if (a.y !== b.y) return a.y - b.y;
-                return a.x - b.x;
-            });
-            const claimPositionsSorted = [...claim.positions].sort((a, b) => {
-                if (a.y !== b.y) return a.y - b.y;
-                return a.x - b.x;
-            });
-
-            // Check if all positions match
-            return cwPositionsSorted.every((cwPos, index) => {
-                const claimPos = claimPositionsSorted[index];
-                return cwPos.x === claimPos.x && cwPos.y === claimPos.y;
-            });
+            // Check if positions overlap (same word in same location)
+            return cw.positions.some(cwPos =>
+                claim.positions.some(claimPos => cwPos.x === claimPos.x && cwPos.y === claimPos.y)
+            );
         });
         if (wordAlreadyClaimed) {
             return { valid: false, error: 'Word already claimed' };
-        }
-
-        // NEW RULE: Only reject invalid words in the SAME direction that contain the claimed word as a substring
-        // This prevents claiming "COT" when it's part of invalid "COTE" (same direction)
-        // But allows perpendicular words to be invalid (e.g., "RTL" vertical when claiming "COT" horizontal)
-        const allWordsOnBoard = findAllWords(this.state.board);
-        const wordsContainingNewTiles = allWordsOnBoard.filter(wordPositions =>
-            containsNewTile(wordPositions, newlyPlacedTiles)
-        );
-
-        // Validate each word that contains newly placed tiles
-        for (const wordPositions of wordsContainingNewTiles) {
-            const { word: boardWord, isValid: boardWordValid } = this.extractWord(wordPositions);
-            if (!boardWordValid || boardWord.length < 3) {
-                continue; // Skip invalid word lines
-            }
-
-            const boardWordUpper = boardWord.toUpperCase();
-
-            // Check if this word is in the dictionary
-            if (!dictionary.has(boardWordUpper)) {
-                // Check if this word is the same as the claimed word (already validated above)
-                const isClaimedWord = wordPositions.length === claim.positions.length &&
-                    wordPositions.every(wp =>
-                        claim.positions.some(cp => cp.x === wp.x && cp.y === wp.y)
-                    );
-
-                if (isClaimedWord) {
-                    continue; // This is the word being claimed, already validated
-                }
-
-                // Check if this invalid word is in the SAME direction as the claimed word
-                const sameDirection = areWordsSameDirection(claim.positions, wordPositions);
-
-                // Check if the claimed word is a substring of this invalid word
-                const isSubstring = isSubstringWord(claim.positions, wordPositions);
-
-                // Only reject if: same direction AND claimed word is a substring of the invalid word
-                if (sameDirection && isSubstring) {
-                    return {
-                        valid: false,
-                        error: `Cannot claim "${word.toUpperCase()}" because it is part of invalid word "${boardWordUpper}" in the same direction`
-                    };
-                }
-
-                // If perpendicular direction, allow it to be invalid (don't reject)
-                // This allows claiming "COT" even if "RTL" (perpendicular) is invalid
-            }
         }
 
         // Calculate score
@@ -404,22 +298,11 @@ export class GrabbleEngine {
         results: Array<{ valid: boolean; error?: string; word?: string; score?: number; bonuses?: string[] }>;
         totalScore: number;
     }> {
-        // Rule: Player must have placed at least one tile to claim words
-        if (newlyPlacedTiles.length === 0) {
-            return { 
-                valid: false, 
-                results: [{ valid: false, error: 'You must place at least one tile before claiming words' }], 
-                totalScore: 0 
-            };
-        }
-
         const results = [];
         let totalScore = 0;
 
         for (const claim of claims) {
-            // Pass empty array for newlyPlacedTiles since we've already validated the player has placed tiles
-            // This allows claiming any word on the board, not just words containing newly placed tiles
-            const result = await this.validateWordClaim(claim, [], dictionary);
+            const result = await this.validateWordClaim(claim, newlyPlacedTiles, dictionary);
             results.push(result);
             if (result.valid && result.score !== undefined) {
                 totalScore += result.score;
@@ -469,43 +352,6 @@ export class GrabbleEngine {
             const tile = this.state.tileBag.pop()!;
             player.rack.push(tile);
         }
-    }
-
-    /**
-     * Remove tiles from a player's rack by their indices (for multiplayer tile placement)
-     * Returns the removed tiles
-     */
-    removeTilesFromRack(playerId: number, tileIndices: number[]): Tile[] {
-        const player = this.state.players.find(p => p.id === playerId);
-        if (!player) {
-            throw new Error(`Player ${playerId} not found`);
-        }
-
-        const removedTiles: Tile[] = [];
-        // Sort indices descending to remove from end first (maintains correct indices)
-        for (const index of tileIndices.sort((a, b) => b - a)) {
-            if (index >= 0 && index < player.rack.length) {
-                removedTiles.push(player.rack.splice(index, 1)[0]);
-            }
-        }
-
-        return removedTiles;
-    }
-
-    /**
-     * Return a tile to a player's rack (for tile removal from board)
-     */
-    returnTileToRack(playerId: number, tile: Tile): void {
-        const player = this.state.players.find(p => p.id === playerId);
-        if (!player) {
-            throw new Error(`Player ${playerId} not found`);
-        }
-
-        // Add tile back to rack (without board-specific properties)
-        player.rack.push({
-            letter: tile.letter,
-            points: tile.points
-        });
     }
 
     /**
@@ -582,34 +428,4 @@ export class GrabbleEngine {
         }
         return true;
     }
-
-    /**
-     * Set the letter for a blank tile on the board
-     */
-    setBlankTileLetter(x: number, y: number, letter: string, playerId: number): boolean {
-        const tile = this.state.board[y]?.[x];
-        if (!tile) {
-            return false;
-        }
-
-        // Verify it's a blank tile
-        if (tile.letter !== ' ') {
-            return false;
-        }
-
-        // Verify ownership
-        if (tile.playerId !== playerId) {
-            return false;
-        }
-
-        // Verify not already locked
-        if (tile.isBlankLocked) {
-            return false;
-        }
-
-        // Set the letter
-        tile.blankLetter = letter.toUpperCase();
-        return true;
-    }
 }
-

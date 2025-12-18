@@ -11,9 +11,14 @@ interface BoardProps {
   onTileDrop?: (x: number, y: number, tileData: { index: number; tile: Tile }) => void;
   onTileRemove?: (x: number, y: number) => void;
   fallingTiles?: Set<string>;
+  fallingTileData?: Map<string, { y: number; column: number; delay: number; duration: number }>; // Fall data for stagger and duration
+  removingTiles?: Set<string>; // Tiles being removed (flying to rack)
+  removingTileData?: Map<string, { dx: number; dy: number }>; // Removal animation data (direction to rack)
+  bottomRowShake?: Set<number>; // Columns that should shake at bottom row
   currentPlayerId?: number;
   onWordSelect?: (positions: Position[]) => void;
   tilesPlacedThisTurn?: Position[]; // Tiles placed in current turn (for showing remove button)
+  onTileMove?: (fromX: number, fromY: number, toX: number, toY: number) => void; // Move tile within board
   onBlankTileEdit?: (x: number, y: number) => void; // Handler for editing blank tile letter
   palindromeTiles?: Set<string>; // Tile positions to animate for palindrome bonus
   emordnilapTiles?: Set<string>; // Tile positions to animate for emordnilap bonus
@@ -30,9 +35,14 @@ const Board: React.FC<BoardProps> = ({
   onTileDrop,
   onTileRemove,
   fallingTiles = new Set(),
+  fallingTileData = new Map(),
+  removingTiles = new Set(),
+  removingTileData = new Map(),
+  bottomRowShake = new Set(),
   currentPlayerId,
   onWordSelect,
   tilesPlacedThisTurn = [],
+  onTileMove,
   onBlankTileEdit,
   palindromeTiles = new Set(),
   emordnilapTiles = new Set(),
@@ -79,6 +89,7 @@ const Board: React.FC<BoardProps> = ({
   };
   
   const [dragOverCell, setDragOverCell] = useState<Position | null>(null);
+  const [hoveredColumn, setHoveredColumn] = useState<number | null>(null); // Track hovered column for highlighting
   const [draggedTilePos, setDraggedTilePos] = useState<Position | null>(null);
   const [draggedTileForRemoval, setDraggedTileForRemoval] = useState<Position | null>(null);
   const [isDraggingWord, setIsDraggingWord] = useState(false);
@@ -323,9 +334,6 @@ const Board: React.FC<BoardProps> = ({
     e.stopPropagation();
     setDragOverCell(null);
     
-    // Clear dragged tile for removal since we're dropping on the board
-    setDraggedTileForRemoval(null);
-    
     try {
       const data = e.dataTransfer.getData('text/plain');
       if (data) {
@@ -334,10 +342,22 @@ const Board: React.FC<BoardProps> = ({
         if (parsed.tile && typeof parsed.index === 'number' && onTileDrop) {
           // Always allow drop - tile will fall to lowest empty cell in column via gravity
           onTileDrop(x, y, parsed);
-        }
-        // If dragging a tile from board to another board position, clear removal flag
-        else if (parsed.fromBoard) {
           setDraggedTileForRemoval(null);
+        }
+        // If dragging a tile from board to another board position
+        else if (parsed.fromBoard && parsed.x !== undefined && parsed.y !== undefined) {
+          const fromX = parsed.x;
+          const fromY = parsed.y;
+          // Always clear removal flag when dropping on board
+          setDraggedTileForRemoval(null);
+          
+          // If dropping on a different position, move the tile
+          if ((fromX !== x || fromY !== y) && onTileMove) {
+            console.log('Moving tile from board:', { fromX, fromY, toX: x, toY: y });
+            onTileMove(fromX, fromY, x, y);
+          } else {
+            console.log('Dropped tile on same position, no move needed');
+          }
         }
       }
     } catch (error) {
@@ -347,17 +367,22 @@ const Board: React.FC<BoardProps> = ({
 
   const handleTileDragStart = (e: React.DragEvent, x: number, y: number) => {
     const tile = board[y][x];
-    // Only allow dragging own tiles during own turn
-    if (tile && tile.playerId !== undefined && currentPlayerId !== undefined) {
-      if (tile.playerId !== currentPlayerId) {
-        e.preventDefault();
-        return;
-      }
+    if (!tile) {
+      e.preventDefault();
+      return;
     }
+    
+    // Only allow dragging own tiles that were placed this turn
+    const wasPlacedThisTurn = tilesPlacedThisTurn.some(pos => pos.x === x && pos.y === y);
+    if (!wasPlacedThisTurn || (currentPlayerId !== undefined && tile.playerId !== currentPlayerId)) {
+      e.preventDefault();
+      return;
+    }
+    
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', JSON.stringify({ fromBoard: true, x, y }));
     setDraggedTilePos({ x, y });
-    setDraggedTileForRemoval({ x, y }); // Track tile being dragged for removal
+    setDraggedTileForRemoval({ x, y }); // Track tile being dragged for removal (in case dropped outside)
   };
 
   const handleTileDragEnd = (e: React.DragEvent, x: number, y: number) => {
@@ -427,7 +452,21 @@ const Board: React.FC<BoardProps> = ({
             return (
               <div
                 key={`${x}-${y}`}
-                className={`cell ${selected ? 'highlighted' : ''} ${isEmpty && isTopRow ? 'drop-zone' : ''} ${isDragOver ? 'drag-over' : ''} ${tile ? 'has-tile' : ''} ${isInDragSelection ? 'word-selecting' : ''}`}
+                className={`cell ${selected ? 'highlighted' : ''} ${isEmpty && isTopRow ? 'drop-zone' : ''} ${isDragOver ? 'drag-over' : ''} ${tile ? 'has-tile' : ''} ${isInDragSelection ? 'word-selecting' : ''} ${bottomRowShake.has(x) && y === 6 ? 'bottom-row-shake' : ''} ${hoveredColumn === x ? 'column-highlight' : ''}`}
+                data-x={x}
+                data-y={y}
+                onMouseEnter={() => {
+                  // Highlight entire column when hovering over top row drop zone
+                  if (isEmpty && isTopRow) {
+                    setHoveredColumn(x);
+                  }
+                }}
+                onMouseLeave={() => {
+                  // Only clear if leaving the top row
+                  if (isTopRow) {
+                    setHoveredColumn(null);
+                  }
+                }}
                 onMouseDown={(e) => handleMouseDown(e, x, y)}
                 onMouseMove={(e) => handleMouseMove(e, x, y)}
                 onTouchStart={(e) => handleTouchStart(e, x, y)}
@@ -461,7 +500,10 @@ const Board: React.FC<BoardProps> = ({
               >
                 {tile ? (
                   <div 
-                    className={`tile ${draggedTilePos && draggedTilePos.x === x && draggedTilePos.y === y ? 'dragging' : ''} ${fallingTiles.has(`${x}-${y}`) ? 'falling' : ''} ${palindromeTiles.has(`${x}-${y}`) ? 'palindrome' : ''} ${emordnilapTiles.has(`${x}-${y}`) ? 'emordnilap' : ''} ${diagonalTiles.has(`${x}-${y}`) ? 'diagonal' : ''} ${tile.playerId === currentPlayerId ? 'removable' : ''} ${tile.letter === ' ' ? 'blank-tile' : ''}`}
+                    draggable={tile.playerId === currentPlayerId && tilesPlacedThisTurn.some(pos => pos.x === x && pos.y === y)}
+                    onDragStart={(e) => handleTileDragStart(e, x, y)}
+                    onDragEnd={(e) => handleTileDragEnd(e, x, y)}
+                    className={`tile ${draggedTilePos && draggedTilePos.x === x && draggedTilePos.y === y ? 'dragging' : ''} ${fallingTiles.has(`${x}-${y}`) ? 'falling' : ''} ${removingTiles.has(`${x}-${y}`) ? 'removing' : ''} ${palindromeTiles.has(`${x}-${y}`) ? 'palindrome' : ''} ${emordnilapTiles.has(`${x}-${y}`) ? 'emordnilap' : ''} ${diagonalTiles.has(`${x}-${y}`) ? 'diagonal' : ''} ${tile.playerId === currentPlayerId ? 'removable' : ''} ${tile.letter === ' ' ? 'blank-tile' : ''}`}
                     style={{ 
                       backgroundColor: getPlayerColor(tile.playerId || 0),
                       color: 'white',
@@ -472,9 +514,21 @@ const Board: React.FC<BoardProps> = ({
                         borderRight: '2px dashed rgba(255, 255, 255, 0.6)',
                         borderBottom: '2px dashed rgba(255, 255, 255, 0.6)',
                       } : {}),
-                      ...(fallingTiles.has(`${x}-${y}`) ? {
-                        '--fall-distance': `${y * 100}%`
-                      } as React.CSSProperties : {}),
+                      ...(fallingTiles.has(`${x}-${y}`) ? (() => {
+                        const tileData = fallingTileData?.get(`${x}-${y}`);
+                        return {
+                          '--fall-distance': `${y * 100}%`,
+                          '--fall-duration': tileData?.duration ? `${tileData.duration}s` : '0.4s',
+                          'animation-delay': tileData?.delay ? `${tileData.delay}s` : '0s'
+                        } as React.CSSProperties;
+                      })() : {}),
+                      ...(removingTiles.has(`${x}-${y}`) ? (() => {
+                        const removeData = removingTileData?.get(`${x}-${y}`);
+                        return {
+                          '--remove-dx': removeData?.dx ? `${removeData.dx}px` : '-200px',
+                          '--remove-dy': removeData?.dy ? `${removeData.dy}px` : '-300px'
+                        } as React.CSSProperties;
+                      })() : {}),
                       ...(emordnilapTiles.has(`${x}-${y}`) ? (() => {
                         const movement = getEmordnilapMovement(x, y);
                         // Get cell dimensions - use state if available, otherwise calculate from board element
@@ -522,9 +576,6 @@ const Board: React.FC<BoardProps> = ({
                         } as React.CSSProperties;
                       })() : {})
                     }}
-                    draggable={tile.playerId === currentPlayerId}
-                    onDragStart={(e) => handleTileDragStart(e, x, y)}
-                    onDragEnd={(e) => handleTileDragEnd(e, x, y)}
                     onClick={(e) => {
                       // Prevent cell click from firing when clicking on tile
                       e.stopPropagation();
@@ -608,8 +659,6 @@ const Board: React.FC<BoardProps> = ({
                     </div>
                     <div className="points">{tile.points}</div>
                   </div>
-                ) : isEmpty && isTopRow ? (
-                  <div className="drop-indicator">↓</div>
                 ) : null}
               </div>
             );

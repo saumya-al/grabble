@@ -51,6 +51,12 @@ interface UseSocketReturn {
     // Error handling
     error: string | null;
     clearError: () => void;
+    
+    // New game request state
+    newGameRequest: { requesterId: string; requesterName: string } | null;
+    newGameDeclined: { playerName: string } | null;
+    clearNewGameRequest: () => void;
+    clearNewGameDeclined: () => void;
 
     // Room actions
     createRoom: (playerName: string, targetScore?: number) => void;
@@ -66,6 +72,8 @@ interface UseSocketReturn {
     endTurn: () => void;
     removeTile: (column: number, row: number) => void;
     setBlankLetter: (x: number, y: number, letter: string) => void;
+    requestNewGame: () => void;
+    respondNewGame: (accepted: boolean) => void;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -77,6 +85,8 @@ export function useSocket(): UseSocketReturn {
     const [gameState, setGameState] = useState<GameState | null>(null);
     const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Array<{ x: number; y: number }>>([]);
     const [error, setError] = useState<string | null>(null);
+    const [newGameRequest, setNewGameRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
+    const [newGameDeclined, setNewGameDeclined] = useState<{ playerName: string } | null>(null);
 
     // Initialize socket connection
     useEffect(() => {
@@ -263,6 +273,34 @@ export function useSocket(): UseSocketReturn {
             setGameState(gameState);
         });
 
+        // New game request handlers
+        socket.on('new_game_request_sent', () => {
+            console.log('📤 New game request sent');
+        });
+
+        socket.on('new_game_requested', (data: { requesterId: string; requesterName: string }) => {
+            console.log('🔄 New game requested by:', data.requesterName, 'requesterId:', data.requesterId, 'my playerId:', socket.id);
+            setNewGameRequest(data);
+        });
+
+        socket.on('new_game_response', (data: { playerId: string; playerName: string; accepted: boolean }) => {
+            console.log(`📝 ${data.playerName} ${data.accepted ? 'accepted' : 'declined'} new game request`);
+        });
+
+        socket.on('new_game_all_accepted', (data: { gameState: GameState }) => {
+            console.log('✅ All players accepted - starting new game, new gameState:', data.gameState);
+            setGameState(data.gameState);
+            setTilesPlacedThisTurn([]);
+            setNewGameRequest(null); // Clear request when all accepted
+            setNewGameDeclined(null); // Also clear any declined state
+        });
+
+        socket.on('new_game_declined', (data: { playerName: string }) => {
+            console.log(`❌ New game declined by ${data.playerName}`);
+            setNewGameDeclined(data);
+            setNewGameRequest(null); // Clear request when declined
+        });
+
         // Error handling
         socket.on('error', (data: Parameters<ServerToClientEvents['error']>[0]) => {
             const { message } = data;
@@ -334,8 +372,26 @@ export function useSocket(): UseSocketReturn {
         socketRef.current.emit('set_blank_letter', { x, y, letter });
     }, []);
 
+    const requestNewGame = useCallback(() => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('request_new_game');
+    }, []);
+
+    const respondNewGame = useCallback((accepted: boolean) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('respond_new_game', { accepted });
+    }, []);
+
     const clearError = useCallback(() => {
         setError(null);
+    }, []);
+
+    const clearNewGameRequest = useCallback(() => {
+        setNewGameRequest(null);
+    }, []);
+
+    const clearNewGameDeclined = useCallback(() => {
+        setNewGameDeclined(null);
     }, []);
 
     return {
@@ -349,6 +405,10 @@ export function useSocket(): UseSocketReturn {
         tilesPlacedThisTurn,
         error,
         clearError,
+        newGameRequest,
+        newGameDeclined,
+        clearNewGameRequest,
+        clearNewGameDeclined,
         createRoom,
         joinRoom,
         leaveRoom,
@@ -359,6 +419,8 @@ export function useSocket(): UseSocketReturn {
         swapTiles,
         endTurn,
         removeTile,
-        setBlankLetter
+        setBlankLetter,
+        requestNewGame,
+        respondNewGame,
     };
 }

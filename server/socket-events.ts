@@ -19,6 +19,14 @@ const gameManagers: Map<string, GameStateManager> = new Map();
 // Track tiles placed by players in the current turn (socket.id -> positions)
 const playerTurnTiles = new Map<string, Position[]>();
 
+// Track new game requests per room (roomCode -> { requesterId, responses: Map<playerId, accepted> })
+interface NewGameRequest {
+    requesterId: string;
+    requesterName: string;
+    responses: Map<string, boolean>; // playerId -> accepted
+}
+const newGameRequests = new Map<string, NewGameRequest>();
+
 export function setupSocketEvents(
     io: Server<ClientToServerEvents, ServerToClientEvents, {}, SocketData>,
     roomManager: RoomManager
@@ -651,10 +659,170 @@ export function setupSocketEvents(
         });
 
         /**
+         * Request a new game
+         */
+        socket.on('request_new_game', () => {
+            const roomCode = socket.data.roomCode;
+            if (!roomCode) {
+                socket.emit('error', { message: 'You must be in a room to request a new game' });
+                return;
+            }
+
+            const room = roomManager.getRoom(roomCode);
+            if (!room || room.status !== 'playing') {
+                socket.emit('error', { message: 'Game must be in progress to request a new game' });
+                return;
+            }
+
+            const requester = room.players.find(p => p.id === socket.id);
+            if (!requester) {
+                socket.emit('error', { message: 'Player not found in room' });
+                return;
+            }
+
+            // Clear any existing request for this room
+            newGameRequests.delete(roomCode);
+
+            // Create new request
+            const responses = new Map<string, boolean>();
+            responses.set(socket.id, true); // Requester auto-accepts
+            newGameRequests.set(roomCode, {
+                requesterId: socket.id,
+                requesterName: requester.name,
+                responses
+            });
+
+            // Notify requester that request was sent
+            socket.emit('new_game_request_sent');
+
+            // Notify all other players in the room (use io.to to broadcast to all in room)
+            io.to(roomCode).emit('new_game_requested', {
+                requesterId: socket.id,
+                requesterName: requester.name
+            });
+
+            console.log(`🔄 New game requested by ${requester.name} in room ${roomCode}, emitting to room`);
+        });
+
+        /**
+         * Respond to a new game request
+         */
+        socket.on('respond_new_game', ({ accepted }) => {
+            const roomCode = socket.data.roomCode;
+            if (!roomCode) {
+                socket.emit('error', { message: 'You must be in a room to respond' });
+                return;
+            }
+
+            const request = newGameRequests.get(roomCode);
+            if (!request) {
+                socket.emit('error', { message: 'No pending new game request' });
+                return;
+            }
+
+            const room = roomManager.getRoom(roomCode);
+            if (!room) {
+                socket.emit('error', { message: 'Room not found' });
+                return;
+            }
+
+            const player = room.players.find(p => p.id === socket.id);
+            if (!player) {
+                socket.emit('error', { message: 'Player not found in room' });
+                return;
+            }
+
+            // Record response
+            request.responses.set(socket.id, accepted);
+
+            // Notify all players of the response
+            io.to(roomCode).emit('new_game_response', {
+                playerId: socket.id,
+                playerName: player.name,
+                accepted
+            });
+
+            if (!accepted) {
+                // If declined, notify all players and clear the request
+                io.to(roomCode).emit('new_game_declined', {
+                    playerName: player.name
+                });
+                newGameRequests.delete(roomCode);
+                console.log(`❌ New game declined by ${player.name} in room ${roomCode}`);
+                return;
+            }
+
+            // Check if all players have accepted
+            const allPlayers = room.players.map(p => p.id);
+            const allResponded = allPlayers.length > 0 && allPlayers.every(playerId => request.responses.has(playerId));
+            const allAccepted = allPlayers.length > 0 && allPlayers.every(playerId => request.responses.get(playerId) === true);
+
+            console.log(`📊 New game request status in room ${roomCode}:`, {
+                totalPlayers: allPlayers.length,
+                responded: request.responses.size,
+                allResponded,
+                allAccepted,
+                responses: Array.from(request.responses.entries()).map(([id, accepted]) => ({
+                    playerId: id,
+                    playerName: room.players.find(p => p.id === id)?.name,
+                    accepted
+                }))
+            });
+
+            if (allResponded && allAccepted) {
+                // All players accepted - restart the game
+                const manager = gameManagers.get(roomCode);
+                if (manager) {
+                    // Get current players from room
+                    const playerNames = room.players.map(p => p.name);
+                    const newManager = GameStateManager.createNewGame(
+                        room.players.length,
+                        playerNames,
+                        room.targetScore
+                    );
+                    const newGameState = newManager.getState();
+
+                    // Update game manager
+                    gameManagers.set(roomCode, newManager);
+
+                    // Update room status
+                    room.gameState = newGameState;
+                    room.status = 'playing';
+                    roomManager.updateGameState(roomCode, newGameState);
+
+                    // Clear the request
+                    newGameRequests.delete(roomCode);
+
+                    // Clear turn tiles
+                    allPlayers.forEach(playerId => {
+                        playerTurnTiles.delete(playerId);
+                    });
+
+                    // Notify all players
+                    io.to(roomCode).emit('new_game_all_accepted', {
+                        gameState: newGameState
+                    });
+
+                    console.log(`✅ New game started in room ${roomCode} - all players accepted`);
+                }
+            }
+        });
+
+        /**
          * Handle disconnection
          */
         socket.on('disconnect', () => {
             console.log(`🔌 Client disconnected: ${socket.id}`);
+            const roomCode = socket.data.roomCode;
+            
+            // Clear any pending new game request if requester disconnects
+            if (roomCode) {
+                const request = newGameRequests.get(roomCode);
+                if (request && request.requesterId === socket.id) {
+                    newGameRequests.delete(roomCode);
+                }
+            }
+            
             handleLeaveRoom(socket, io, roomManager);
         });
     });
