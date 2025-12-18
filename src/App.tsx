@@ -76,6 +76,7 @@ function App() {
     claimWords: socketClaimWords,
     swapTiles: socketSwapTiles,
     removeTile: socketRemoveTile,
+    setBlankLetter: socketSetBlankLetter,
   } = useSocket();
 
   // Multiplayer mode: true when in a room that is playing
@@ -89,7 +90,7 @@ function App() {
   const [pendingPlacements, setPendingPlacements] = useState<Array<{ column: number; tile: Tile }>>([]);
   const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Position[]>([]); // Track tiles placed this turn
   const [isPlacingTiles, setIsPlacingTiles] = useState(false);
-  const [showSetup, setShowSetup] = useState(true);
+  const [showSetup, setShowSetup] = useState(false); // Start false so lobby shows first when connected
   const [dictionary, setDictionary] = useState<Set<string>>(new Set());
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [renderKey, setRenderKey] = useState(0); // Force re-render
@@ -159,12 +160,12 @@ function App() {
           prevPos => prevPos.x === newPos.x && prevPos.y === newPos.y
         )
       );
-      
+
       // Trigger falling animation for each new tile
       newTiles.forEach(pos => {
         const tileKey = `${pos.x}-${pos.y}`;
         setFallingTiles(prev => new Set(prev).add(tileKey));
-        
+
         // Remove animation after it completes
         setTimeout(() => {
           setFallingTiles(prev => {
@@ -174,14 +175,39 @@ function App() {
           });
         }, 500);
       });
-      
+
+      // Check if any newly placed tile is a blank tile (needs letter assignment)
+      if (socketGameState) {
+        const myIdx = room?.players.findIndex(rp => rp.id === playerId) ?? -1;
+        console.log('🔍 Checking for blank tiles in newTiles:', newTiles, 'myIdx:', myIdx);
+
+        for (const pos of newTiles) {
+          const placedTile = socketGameState.board[pos.y]?.[pos.x];
+          console.log('🔍 Tile at', pos, ':', placedTile);
+
+          if (placedTile && placedTile.letter === ' ' && !placedTile.isBlankLocked) {
+            console.log('🔍 Found blank tile! playerId on tile:', placedTile.playerId, 'myIdx:', myIdx);
+            // Check if this tile belongs to me (I placed it)
+            if (placedTile.playerId === myIdx) {
+              console.log('✅ Showing blank tile modal for position:', pos);
+              setBlankTileModal({
+                isOpen: true,
+                position: pos,
+                currentLetter: placedTile.blankLetter || ''
+              });
+              break; // Only show one modal at a time
+            }
+          }
+        }
+      }
+
       // Update previous tiles
       prevSocketTilesPlacedRef.current = [...socketTilesPlacedThisTurn];
     } else if (!isMultiplayer) {
       // Reset when switching to local mode
       prevSocketTilesPlacedRef.current = [];
     }
-  }, [socketTilesPlacedThisTurn, isMultiplayer]);
+  }, [socketTilesPlacedThisTurn, isMultiplayer, socketGameState, room, playerId]);
 
   const handleStartGame = (numPlayers: number, playerNames: string[], targetScore: number) => {
     const manager = GameStateManager.createNewGame(numPlayers, playerNames, targetScore);
@@ -366,14 +392,14 @@ function App() {
               return pos;
             });
         });
-        
+
         // Also remove any selected words that contain this position
         // And update positions in selected words after gravity
         setSelectedWords(prev => prev
-          .filter(wordPositions => 
+          .filter(wordPositions =>
             !wordPositions.some(pos => pos.x === x && pos.y === y)
           )
-          .map(wordPositions => 
+          .map(wordPositions =>
             wordPositions.map(pos => {
               // If position is in same column and above removed position, it moved down
               if (pos.x === x && pos.y < y) {
@@ -725,23 +751,23 @@ function App() {
       if (isMultiplayer) {
         // Multiplayer: use socket
         socketSwapTiles(selectedTiles);
-        
+
         // Clear selections
         setSelectedTiles([]);
         setShowSwapConfirm(false);
-        
+
         // Clear all turn state
         setSelectedWords([]);
         setTilesPlacedThisTurn([]);
         setPendingPlacements([]);
-        
+
         console.log('Tiles swapped via socket, turn will advance on server');
       } else {
         // Local game: use engine
         if (!gameManager || !engine) return;
-        
+
         const currentPlayer = gameManager.getCurrentPlayer();
-        
+
         // Perform the swap
         engine.swapTiles(currentPlayer.id, selectedTiles);
 
@@ -777,16 +803,28 @@ function App() {
   };
 
   const handleBlankTileConfirm = (letter: string) => {
-    if (!gameManager || !engine || !blankTileModal.position) return;
+    if (!blankTileModal.position) return;
 
     const { x, y } = blankTileModal.position;
+
+    // Multiplayer mode: emit socket event
+    if (isMultiplayer) {
+      console.log('📤 Multiplayer: setting blank tile letter', { x, y, letter });
+      socketSetBlankLetter(x, y, letter);
+      setBlankTileModal({ isOpen: false, position: null, currentLetter: '' });
+      return;
+    }
+
+    // Local mode: use engine directly
+    if (!gameManager || !engine) return;
+
     // Access the engine's state directly (not a copy) to update the tile
     const state = (engine as any).state;
     if (!state || !state.board || !state.board[y] || !state.board[y][x]) {
       console.error('Invalid tile position or state');
       return;
     }
-    
+
     const tile = state.board[y][x];
 
     if (tile && tile.letter === ' ') {
@@ -865,7 +903,7 @@ function App() {
   if (!isMultiplayer && (room?.status === 'waiting' || !room)) {
     // Show lobby for multiplayer flow (room is null or waiting)
     // Check if user has interacted with multiplayer (connected but not in local game)
-    if (connected && !gameManager) {
+    if (connected && !gameManager && !showSetup) {
       return (
         <LobbyScreen
           connected={connected}
@@ -880,6 +918,7 @@ function App() {
           leaveRoom={leaveRoom}
           setReady={setReady}
           startGame={socketStartGame}
+          onPlaySolo={() => setShowSetup(true)}
         />
       );
     }
@@ -926,6 +965,7 @@ function App() {
         leaveRoom={leaveRoom}
         setReady={setReady}
         startGame={socketStartGame}
+        onPlaySolo={() => setShowSetup(true)}
       />
     );
   }

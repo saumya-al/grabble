@@ -23,6 +23,7 @@ interface LobbyScreenProps {
     leaveRoom: () => void;
     setReady: (ready: boolean) => void;
     startGame: () => void;
+    onPlaySolo: () => void; // Trigger local single-player game
 }
 
 type LobbyMode = 'menu' | 'create' | 'join';
@@ -39,7 +40,8 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
     joinRoom,
     leaveRoom,
     setReady,
-    startGame
+    startGame,
+    onPlaySolo
 }) => {
     const [mode, setMode] = useState<LobbyMode>('menu');
     const [playerName, setPlayerName] = useState('');
@@ -169,6 +171,15 @@ const LobbyScreen: React.FC<LobbyScreenProps> = ({
                             disabled={!connected}
                         >
                             Join Room
+                        </button>
+                        <div style={{ margin: '1rem 0', textAlign: 'center', fontSize: '0.9rem', color: '#999' }}>
+                            or
+                        </div>
+                        <button
+                            className="btn btn-solo btn-large"
+                            onClick={onPlaySolo}
+                        >
+                            Play Local
                         </button>
                     </div>
 

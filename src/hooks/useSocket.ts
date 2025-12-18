@@ -12,20 +12,20 @@ import type { Room, RoomPlayer, ServerToClientEvents } from '../../server/types'
 // For GitHub Pages: set REACT_APP_SOCKET_URL in build, or it will try to connect to same hostname:3001
 // For production: use your deployed server URL (e.g., https://your-app.railway.app)
 const getSocketUrl = (): string => {
-  // Check for environment variable (set at build time)
-  if (process.env.REACT_APP_SOCKET_URL) {
-    return process.env.REACT_APP_SOCKET_URL;
-  }
-  
-  // Check if we're on GitHub Pages (saumyamishraal.github.io)
-  if (window.location.hostname.includes('github.io')) {
-    // Replace with your actual server URL after deployment
-    // Example: return 'https://grabble-server.railway.app';
-    return 'https://your-server-url.railway.app'; // TODO: Replace with your actual server URL
-  }
-  
-  // Default: localhost for development
-  return `http://${window.location.hostname}:3001`;
+    // Check for environment variable (set at build time)
+    if (process.env.REACT_APP_SOCKET_URL) {
+        return process.env.REACT_APP_SOCKET_URL;
+    }
+
+    // Check if we're on GitHub Pages (saumyamishraal.github.io)
+    if (window.location.hostname.includes('github.io')) {
+        // Replace with your actual server URL after deployment
+        // Example: return 'https://grabble-server.railway.app';
+        return 'https://your-server-url.railway.app'; // TODO: Replace with your actual server URL
+    }
+
+    // Default: localhost for development
+    return `http://${window.location.hostname}:3001`;
 };
 
 const SOCKET_URL = getSocketUrl();
@@ -64,6 +64,7 @@ interface UseSocketReturn {
     swapTiles: (tileIndices: number[]) => void;
     endTurn: () => void;
     removeTile: (column: number, row: number) => void;
+    setBlankLetter: (x: number, y: number, letter: string) => void;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -212,6 +213,12 @@ export function useSocket(): UseSocketReturn {
             setRoom(prev => prev ? { ...prev, status: 'finished' } : null);
         });
 
+        socket.on('blank_letter_set', (data: any) => {
+            const { gameState } = data;
+            console.log('📝 Blank letter set:', data.x, data.y, data.letter);
+            setGameState(gameState);
+        });
+
         // Error handling
         socket.on('error', (data: Parameters<ServerToClientEvents['error']>[0]) => {
             const { message } = data;
@@ -274,6 +281,11 @@ export function useSocket(): UseSocketReturn {
         socketRef.current.emit('remove_tile', { column, row });
     }, []);
 
+    const setBlankLetter = useCallback((x: number, y: number, letter: string) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('set_blank_letter', { x, y, letter });
+    }, []);
+
     const clearError = useCallback(() => {
         setError(null);
     }, []);
@@ -298,6 +310,7 @@ export function useSocket(): UseSocketReturn {
         claimWords,
         swapTiles,
         endTurn,
-        removeTile
+        removeTile,
+        setBlankLetter
     };
 }

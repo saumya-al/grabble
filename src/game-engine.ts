@@ -75,7 +75,7 @@ export class GrabbleEngine {
             if (column < 0 || column >= 7) {
                 throw new Error(`Invalid column: ${column}`);
             }
-            
+
             // Find first empty cell in column (starting from top)
             let placed = false;
             for (let row = 0; row < 7; row++) {
@@ -88,7 +88,7 @@ export class GrabbleEngine {
                     break;
                 }
             }
-            
+
             if (!placed) {
                 throw new Error(`Column ${column} is full`);
             }
@@ -106,11 +106,11 @@ export class GrabbleEngine {
         if (x < 0 || x >= 7 || y < 0 || y >= 7) {
             throw new Error(`Invalid position: (${x}, ${y})`);
         }
-        
+
         if (this.state.board[y][x] !== null) {
             throw new Error(`Position (${x}, ${y}) is already occupied`);
         }
-        
+
         this.state.board[y][x] = {
             ...tile,
             playerId
@@ -125,12 +125,12 @@ export class GrabbleEngine {
         if (x < 0 || x >= 7 || y < 0 || y >= 7) {
             throw new Error(`Invalid position: (${x}, ${y})`);
         }
-        
+
         const tile = this.state.board[y][x];
         if (tile === null) {
             return null;
         }
-        
+
         this.state.board[y][x] = null;
         // Resolve gravity after removal
         this.resolveGravity();
@@ -203,13 +203,13 @@ export class GrabbleEngine {
         if (!dictionary.has(wordUpper)) {
             return false;
         }
-        
+
         const reverseWord = getReverseWord(this.state.board, positions);
         if (!reverseWord) {
             return false;
         }
         const reverseUpper = reverseWord.toUpperCase();
-        
+
         // Both words must be different and both must be valid dictionary words
         return reverseUpper !== wordUpper && dictionary.has(reverseUpper);
     }
@@ -292,8 +292,8 @@ export class GrabbleEngine {
         // Check dictionary - ensure we're checking the exact uppercase trimmed word
         if (!dictionary.has(wordUpper)) {
             // Try to find similar words for debugging
-            const similarWords = Array.from(dictionary).filter(w => 
-                w.length === wordUpper.length && 
+            const similarWords = Array.from(dictionary).filter(w =>
+                w.length === wordUpper.length &&
                 w.startsWith(wordUpper[0])
             ).slice(0, 5);
             console.log('Word not found. Similar words:', similarWords);
@@ -309,10 +309,10 @@ export class GrabbleEngine {
         const wordAlreadyClaimed = this.state.claimedWords.some(cw => {
             // Check if word text matches
             if (cw.word.toUpperCase() !== word.toUpperCase()) return false;
-            
+
             // Check if positions match exactly (same word in same location)
             if (cw.positions.length !== claim.positions.length) return false;
-            
+
             // Sort positions for comparison
             const cwPositionsSorted = [...cw.positions].sort((a, b) => {
                 if (a.y !== b.y) return a.y - b.y;
@@ -322,7 +322,7 @@ export class GrabbleEngine {
                 if (a.y !== b.y) return a.y - b.y;
                 return a.x - b.x;
             });
-            
+
             // Check if all positions match
             return cwPositionsSorted.every((cwPos, index) => {
                 const claimPos = claimPositionsSorted[index];
@@ -337,7 +337,7 @@ export class GrabbleEngine {
         // This prevents claiming "COT" when it's part of invalid "COTE" (same direction)
         // But allows perpendicular words to be invalid (e.g., "RTL" vertical when claiming "COT" horizontal)
         const allWordsOnBoard = findAllWords(this.state.board);
-        const wordsContainingNewTiles = allWordsOnBoard.filter(wordPositions => 
+        const wordsContainingNewTiles = allWordsOnBoard.filter(wordPositions =>
             containsNewTile(wordPositions, newlyPlacedTiles)
         );
 
@@ -347,35 +347,35 @@ export class GrabbleEngine {
             if (!boardWordValid || boardWord.length < 3) {
                 continue; // Skip invalid word lines
             }
-            
+
             const boardWordUpper = boardWord.toUpperCase();
-            
+
             // Check if this word is in the dictionary
             if (!dictionary.has(boardWordUpper)) {
                 // Check if this word is the same as the claimed word (already validated above)
                 const isClaimedWord = wordPositions.length === claim.positions.length &&
-                    wordPositions.every(wp => 
+                    wordPositions.every(wp =>
                         claim.positions.some(cp => cp.x === wp.x && cp.y === wp.y)
                     );
-                
+
                 if (isClaimedWord) {
                     continue; // This is the word being claimed, already validated
                 }
-                
+
                 // Check if this invalid word is in the SAME direction as the claimed word
                 const sameDirection = areWordsSameDirection(claim.positions, wordPositions);
-                
+
                 // Check if the claimed word is a substring of this invalid word
                 const isSubstring = isSubstringWord(claim.positions, wordPositions);
-                
+
                 // Only reject if: same direction AND claimed word is a substring of the invalid word
                 if (sameDirection && isSubstring) {
-                    return { 
-                        valid: false, 
-                        error: `Cannot claim "${word.toUpperCase()}" because it is part of invalid word "${boardWordUpper}" in the same direction` 
+                    return {
+                        valid: false,
+                        error: `Cannot claim "${word.toUpperCase()}" because it is part of invalid word "${boardWordUpper}" in the same direction`
                     };
                 }
-                
+
                 // If perpendicular direction, allow it to be invalid (don't reject)
                 // This allows claiming "COT" even if "RTL" (perpendicular) is invalid
             }
@@ -462,6 +462,43 @@ export class GrabbleEngine {
     }
 
     /**
+     * Remove tiles from a player's rack by their indices (for multiplayer tile placement)
+     * Returns the removed tiles
+     */
+    removeTilesFromRack(playerId: number, tileIndices: number[]): Tile[] {
+        const player = this.state.players.find(p => p.id === playerId);
+        if (!player) {
+            throw new Error(`Player ${playerId} not found`);
+        }
+
+        const removedTiles: Tile[] = [];
+        // Sort indices descending to remove from end first (maintains correct indices)
+        for (const index of tileIndices.sort((a, b) => b - a)) {
+            if (index >= 0 && index < player.rack.length) {
+                removedTiles.push(player.rack.splice(index, 1)[0]);
+            }
+        }
+
+        return removedTiles;
+    }
+
+    /**
+     * Return a tile to a player's rack (for tile removal from board)
+     */
+    returnTileToRack(playerId: number, tile: Tile): void {
+        const player = this.state.players.find(p => p.id === playerId);
+        if (!player) {
+            throw new Error(`Player ${playerId} not found`);
+        }
+
+        // Add tile back to rack (without board-specific properties)
+        player.rack.push({
+            letter: tile.letter,
+            points: tile.points
+        });
+    }
+
+    /**
      * Swap tiles (player discards selected tiles, draws new ones)
      */
     swapTiles(playerId: number, tileIndices: number[]): void {
@@ -501,7 +538,7 @@ export class GrabbleEngine {
         const currentTurnOrder = currentPlayer.turnOrder;
         const nextTurnOrder = (currentTurnOrder + 1) % this.state.players.length;
         const nextPlayer = this.state.players.find(p => p.turnOrder === nextTurnOrder);
-        
+
         if (nextPlayer) {
             this.state.currentPlayerId = nextPlayer.id;
         }
@@ -533,6 +570,35 @@ export class GrabbleEngine {
                 return false;
             }
         }
+        return true;
+    }
+
+    /**
+     * Set the letter for a blank tile on the board
+     */
+    setBlankTileLetter(x: number, y: number, letter: string, playerId: number): boolean {
+        const tile = this.state.board[y]?.[x];
+        if (!tile) {
+            return false;
+        }
+
+        // Verify it's a blank tile
+        if (tile.letter !== ' ') {
+            return false;
+        }
+
+        // Verify ownership
+        if (tile.playerId !== playerId) {
+            return false;
+        }
+
+        // Verify not already locked
+        if (tile.isBlankLocked) {
+            return false;
+        }
+
+        // Set the letter
+        tile.blankLetter = letter.toUpperCase();
         return true;
     }
 }

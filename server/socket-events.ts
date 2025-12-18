@@ -240,16 +240,13 @@ export function setupSocketEvents(
                 // Place tiles
                 engine.placeTiles(tilePlacements, playerId);
 
-                // Remove placed tiles from rack (in reverse order to maintain indices)
-                const indices = placements.map(p => p.tileIndex).sort((a, b) => b - a);
-                for (const idx of indices) {
-                    const removed = player.rack.splice(idx, 1);
-                    console.log(`Removed tile at index ${idx}:`, removed[0]?.letter);
-                }
-
-                console.log('Rack after placement:', player.rack.map(t => t.letter).join(','));
+                // Remove placed tiles from rack using engine method (this modifies internal state)
+                const indices = placements.map(p => p.tileIndex);
+                const removedTiles = engine.removeTilesFromRack(playerId, indices);
+                console.log('Removed tiles from rack:', removedTiles.map(t => t?.letter).join(','));
 
                 const newState = manager.getState();
+                console.log('Rack after placement:', newState.players.find(p => p.id === playerId)?.rack.map(t => t.letter).join(','));
 
                 // Calculate where tiles actually landed (after gravity)
                 const placedPositions: Position[] = [];
@@ -528,14 +525,8 @@ export function setupSocketEvents(
                 // Remove the tile
                 const removedTile = gameEngine.removeTile(column, row);
                 if (removedTile) {
-                    const player = state.players.find(p => p.id === playerId);
-                    if (player) {
-                        // Return to rack (without playerId)
-                        player.rack.push({
-                            letter: removedTile.letter,
-                            points: removedTile.points
-                        });
-                    }
+                    // Return tile to rack using engine method (modifies internal state)
+                    gameEngine.returnTileToRack(playerId, removedTile);
 
                     const newState = manager.getState();
                     roomManager.updateGameState(room.code, newState);
@@ -552,6 +543,57 @@ export function setupSocketEvents(
                         playerTurnTiles.set(socket.id, current.filter(p => !(p.x === column && p.y === row)));
                     }
                 }
+            } catch (error: any) {
+                socket.emit('error', { message: error.message });
+            }
+        });
+
+        /**
+         * Set letter for a blank tile
+         */
+        socket.on('set_blank_letter', ({ x, y, letter }) => {
+            const room = roomManager.getRoomByPlayer(socket.id);
+            if (!room || room.status !== 'playing') {
+                socket.emit('error', { message: 'Game not in progress' });
+                return;
+            }
+
+            const manager = gameManagers.get(room.code);
+            if (!manager) {
+                socket.emit('error', { message: 'Game not found' });
+                return;
+            }
+
+            const playerId = roomManager.getGamePlayerId(socket.id);
+            if (playerId === undefined) {
+                socket.emit('error', { message: 'Player not found' });
+                return;
+            }
+
+            const state = manager.getState();
+            if (state.currentPlayerId !== playerId) {
+                socket.emit('error', { message: 'Not your turn' });
+                return;
+            }
+
+            try {
+                const engine = manager.getEngine();
+                const success = engine.setBlankTileLetter(x, y, letter, playerId);
+
+                if (!success) {
+                    socket.emit('error', { message: 'Could not set blank tile letter' });
+                    return;
+                }
+
+                const newState = manager.getState();
+                roomManager.updateGameState(room.code, newState);
+
+                io.to(room.code).emit('blank_letter_set', {
+                    x,
+                    y,
+                    letter: letter.toUpperCase(),
+                    gameState: newState
+                });
             } catch (error: any) {
                 socket.emit('error', { message: error.message });
             }

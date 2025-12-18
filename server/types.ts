@@ -43,6 +43,7 @@ export interface ClientToServerEvents {
     swap_tiles: (data: { tileIndices: number[] }) => void;
     end_turn: () => void;
     remove_tile: (data: { column: number; row: number }) => void;
+    set_blank_letter: (data: { x: number; y: number; letter: string }) => void;
 }
 
 /**
@@ -63,6 +64,7 @@ export interface ServerToClientEvents {
     tiles_swapped: (data: { playerId: string; gameState: GameState }) => void;
     turn_changed: (data: { currentPlayerId: number; gameState: GameState }) => void;
     game_ended: (data: { winnerId: number; finalState: GameState }) => void;
+    blank_letter_set: (data: { x: number; y: number; letter: string; gameState: GameState }) => void;
     error: (data: { message: string; code?: string }) => void;
 }
 
