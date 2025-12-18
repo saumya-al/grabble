@@ -15,6 +15,11 @@ interface BoardProps {
   onWordSelect?: (positions: Position[]) => void;
   tilesPlacedThisTurn?: Position[]; // Tiles placed in current turn (for showing remove button)
   onBlankTileEdit?: (x: number, y: number) => void; // Handler for editing blank tile letter
+  palindromeTiles?: Set<string>; // Tile positions to animate for palindrome bonus
+  emordnilapTiles?: Set<string>; // Tile positions to animate for emordnilap bonus
+  emordnilapPositions?: Position[]; // Word positions for emordnilap movement calculation
+  diagonalTiles?: Set<string>; // Tile positions to animate for diagonal bonus
+  diagonalPositions?: Position[]; // Word positions for diagonal sequential animation
 }
 
 const Board: React.FC<BoardProps> = ({ 
@@ -28,8 +33,51 @@ const Board: React.FC<BoardProps> = ({
   currentPlayerId,
   onWordSelect,
   tilesPlacedThisTurn = [],
-  onBlankTileEdit
+  onBlankTileEdit,
+  palindromeTiles = new Set(),
+  emordnilapTiles = new Set(),
+  emordnilapPositions = [],
+  diagonalTiles = new Set(),
+  diagonalPositions = [],
 }) => {
+  // Calculate movement deltas for emordnilap animation
+  const getEmordnilapMovement = (x: number, y: number): { dx: number; dy: number } => {
+    if (emordnilapPositions.length === 0) return { dx: 0, dy: 0 };
+    
+    // Sort positions to ensure consistent ordering (top-to-bottom, left-to-right)
+    // This ensures the reverse mapping is correct
+    const sortedPositions = [...emordnilapPositions].sort((a, b) => {
+      if (a.y !== b.y) return a.y - b.y;
+      return a.x - b.x;
+    });
+    
+    // Find the index of this position in the sorted word
+    const originalIndex = sortedPositions.findIndex(pos => pos.x === x && pos.y === y);
+    if (originalIndex === -1) return { dx: 0, dy: 0 };
+    
+    // Calculate reverse index (where this tile should move to)
+    const reverseIndex = sortedPositions.length - 1 - originalIndex;
+    const targetPos = sortedPositions[reverseIndex];
+    
+    // Calculate delta in cell units
+    const dx = targetPos.x - x;
+    const dy = targetPos.y - y;
+    
+    return { dx, dy };
+  };
+  
+  // Calculate animation delay for diagonal sequential animation
+  const getDiagonalDelay = (x: number, y: number): number => {
+    if (diagonalPositions.length === 0) return 0;
+    
+    // Find the index of this position in the diagonal word
+    const index = diagonalPositions.findIndex(pos => pos.x === x && pos.y === y);
+    if (index === -1) return 0;
+    
+    // Calculate delay based on position in sequence (0 to 1)
+    return index / (diagonalPositions.length - 1 || 1);
+  };
+  
   const [dragOverCell, setDragOverCell] = useState<Position | null>(null);
   const [draggedTilePos, setDraggedTilePos] = useState<Position | null>(null);
   const [draggedTileForRemoval, setDraggedTileForRemoval] = useState<Position | null>(null);
@@ -327,6 +375,22 @@ const Board: React.FC<BoardProps> = ({
     return draggingWordPositions.some(p => p.x === x && p.y === y);
   };
 
+  // Set CSS variables for cell size (for emordnilap animation)
+  const [cellDimensions, setCellDimensions] = useState<{ width: number; height: number }>({ width: 57, height: 57 });
+  
+  useEffect(() => {
+    const boardElement = document.querySelector('.board') as HTMLElement;
+    if (boardElement) {
+      const boardWidth = boardElement.offsetWidth;
+      const boardHeight = boardElement.offsetHeight;
+      const cellWidth = boardWidth / 7;
+      const cellHeight = boardHeight / 7;
+      boardElement.style.setProperty('--cell-width', `${cellWidth}px`);
+      boardElement.style.setProperty('--cell-height', `${cellHeight}px`);
+      setCellDimensions({ width: cellWidth, height: cellHeight });
+    }
+  }, [board]);
+
   return (
     <div className="board-container">
       <div 
@@ -397,10 +461,11 @@ const Board: React.FC<BoardProps> = ({
               >
                 {tile ? (
                   <div 
-                    className={`tile ${draggedTilePos && draggedTilePos.x === x && draggedTilePos.y === y ? 'dragging' : ''} ${fallingTiles.has(`${x}-${y}`) ? 'falling' : ''} ${tile.playerId === currentPlayerId ? 'removable' : ''} ${tile.letter === ' ' ? 'blank-tile' : ''}`}
+                    className={`tile ${draggedTilePos && draggedTilePos.x === x && draggedTilePos.y === y ? 'dragging' : ''} ${fallingTiles.has(`${x}-${y}`) ? 'falling' : ''} ${palindromeTiles.has(`${x}-${y}`) ? 'palindrome' : ''} ${emordnilapTiles.has(`${x}-${y}`) ? 'emordnilap' : ''} ${diagonalTiles.has(`${x}-${y}`) ? 'diagonal' : ''} ${tile.playerId === currentPlayerId ? 'removable' : ''} ${tile.letter === ' ' ? 'blank-tile' : ''}`}
                     style={{ 
                       backgroundColor: getPlayerColor(tile.playerId || 0),
                       color: 'white',
+                      border: 'none',
                       borderLeft: `4px solid ${getPlayerColor(tile.playerId || 0)}`,
                       ...(tile.letter === ' ' ? {
                         borderTop: '2px dashed rgba(255, 255, 255, 0.6)',
@@ -409,7 +474,53 @@ const Board: React.FC<BoardProps> = ({
                       } : {}),
                       ...(fallingTiles.has(`${x}-${y}`) ? {
                         '--fall-distance': `${y * 100}%`
-                      } as React.CSSProperties : {})
+                      } as React.CSSProperties : {}),
+                      ...(emordnilapTiles.has(`${x}-${y}`) ? (() => {
+                        const movement = getEmordnilapMovement(x, y);
+                        // Get cell dimensions - use state if available, otherwise calculate from board element
+                        let cellWidth = cellDimensions.width;
+                        let cellHeight = cellDimensions.height;
+                        
+                        // Fallback: calculate from board element if dimensions not set yet
+                        if (cellWidth === 57 && cellHeight === 57) {
+                          const boardElement = document.querySelector('.board') as HTMLElement;
+                          if (boardElement) {
+                            const boardWidth = boardElement.offsetWidth;
+                            const boardHeight = boardElement.offsetHeight;
+                            cellWidth = boardWidth / 7;
+                            cellHeight = boardHeight / 7;
+                          }
+                        }
+                        
+                        // Pre-calculate pixel values to handle negative values correctly
+                        const translateX = movement.dx * cellWidth;
+                        const translateY = movement.dy * cellHeight;
+                        
+                        // Debug: log movement calculation and pixel values
+                        console.log(`🎬 Emordnilap tile at (${x}, ${y}):`, {
+                          movement,
+                          translateX: `${translateX}px`,
+                          translateY: `${translateY}px`,
+                          cellWidth,
+                          cellHeight,
+                          hasEmordnilapClass: emordnilapTiles.has(`${x}-${y}`)
+                        });
+                        
+                        const styleObj = {
+                          '--emordnilap-dx': `${movement.dx}`,
+                          '--emordnilap-dy': `${movement.dy}`,
+                          '--emordnilap-translate-x': `${translateX}px`,
+                          '--emordnilap-translate-y': `${translateY}px`
+                        } as React.CSSProperties;
+                        
+                        return styleObj;
+                      })() : {}),
+                      ...(diagonalTiles.has(`${x}-${y}`) ? (() => {
+                        const delay = getDiagonalDelay(x, y);
+                        return {
+                          '--diagonal-delay': `${delay * 1.5}s` // Total animation is 1.5s, delay based on position
+                        } as React.CSSProperties;
+                      })() : {})
                     }}
                     draggable={tile.playerId === currentPlayerId}
                     onDragStart={(e) => handleTileDragStart(e, x, y)}

@@ -4,7 +4,7 @@ import './styles.scss';
 import { GrabbleEngine } from './game-engine';
 import { GameStateManager } from './game-state-manager';
 import type { Tile, Position, WordClaim, Player, ClaimedWord } from './types';
-import { extractWordFromPositions, isValidWordLine } from './word-detection';
+import { extractWordFromPositions, isValidWordLine, getReverseWord } from './word-detection';
 import SetupModal from './components/SetupModal';
 import Navbar from './components/Navbar';
 import ScoreArea from './components/ScoreArea';
@@ -15,8 +15,10 @@ import WordsPanel from './components/WordsPanel';
 import ErrorModal from './components/ErrorModal';
 import SwapConfirmModal from './components/SwapConfirmModal';
 import BlankTileModal from './components/BlankTileModal';
+import BonusOverlay from './components/BonusOverlay';
 import LobbyScreen from './components/LobbyScreen';
 import { useSocket } from './hooks/useSocket';
+import { getPlayerColor } from './utils/playerColors';
 
 // Dictionary loading function
 async function loadDictionary(): Promise<Set<string>> {
@@ -97,6 +99,7 @@ function App() {
   const [fallingTiles, setFallingTiles] = useState<Set<string>>(new Set()); // Track tiles with falling animation
   const prevSocketTilesPlacedRef = useRef<Position[]>([]); // Track previous socket tiles for animation (use ref to avoid dependency issues)
   const prevSocketBoardRef = useRef<(Tile | null)[][] | null>(null); // Track previous board state to detect new tiles
+  const prevClaimedWordsLengthRef = useRef<number>(0); // Track previous claimed words length for palindrome detection
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
   const [showSwapConfirm, setShowSwapConfirm] = useState(false);
   const [blankTileModal, setBlankTileModal] = useState<{ isOpen: boolean; position: Position | null; currentLetter: string }>({
@@ -104,6 +107,14 @@ function App() {
     position: null,
     currentLetter: ''
   });
+  const [palindromeTiles, setPalindromeTiles] = useState<Set<string>>(new Set()); // Track tiles with palindrome animation
+  const [palindromeBonus, setPalindromeBonus] = useState<{ show: boolean; points: number; word: string; playerColor: string } | null>(null);
+  const [emordnilapTiles, setEmordnilapTiles] = useState<Set<string>>(new Set()); // Track tiles with emordnilap animation
+  const [emordnilapPositions, setEmordnilapPositions] = useState<Position[]>([]); // Store word positions for emordnilap animation
+  const [emordnilapBonus, setEmordnilapBonus] = useState<{ show: boolean; points: number; word: string; reverseWord: string; playerColor: string } | null>(null);
+  const [diagonalTiles, setDiagonalTiles] = useState<Set<string>>(new Set()); // Track tiles with diagonal animation
+  const [diagonalPositions, setDiagonalPositions] = useState<Position[]>([]); // Store word positions for diagonal animation
+  const [diagonalBonus, setDiagonalBonus] = useState<{ show: boolean; points: number; word: string; playerColor: string } | null>(null);
 
   // Helper function to show error modal
   const showError = (message: string) => {
@@ -159,6 +170,168 @@ function App() {
       setDictionaryLoaded(true);
     });
   }, []);
+
+  // Handle bonuses from multiplayer socket events
+  // Process multiple words with bonuses sequentially
+  useEffect(() => {
+    if (isMultiplayer && socketGameState && room && playerId) {
+      const claimedWords = socketGameState.claimedWords || [];
+      const currentLength = claimedWords.length;
+      
+      // Only check if new words were added
+      if (currentLength > prevClaimedWordsLengthRef.current) {
+        const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+        const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
+        
+        // Collect all bonus animations to show (flattened: word + bonus type)
+        // Priority within each word: Diagonal → Emordnilap → Palindrome
+        type BonusAnimation = {
+          word: string;
+          positions: Position[];
+          bonusType: 'diagonal' | 'emordnilap' | 'palindrome';
+          score: number;
+          reverseWord?: string;
+        };
+        
+        const newBonusAnimations: BonusAnimation[] = [];
+        
+        for (let i = prevClaimedWordsLengthRef.current; i < currentLength; i++) {
+          const claimedWord = claimedWords[i];
+          if (claimedWord && claimedWord.playerId === myGamePlayerId) {
+            const bonuses = claimedWord.bonuses || [];
+            
+            // Add bonuses in priority order: Diagonal → Emordnilap → Palindrome
+            if (bonuses.includes('diagonal')) {
+              newBonusAnimations.push({
+                word: claimedWord.word,
+                positions: claimedWord.positions,
+                bonusType: 'diagonal',
+                score: claimedWord.score
+              });
+            }
+            if (bonuses.includes('emordnilap')) {
+              const reverseWord = getReverseWord(socketGameState.board, claimedWord.positions);
+              newBonusAnimations.push({
+                word: claimedWord.word,
+                positions: claimedWord.positions,
+                bonusType: 'emordnilap',
+                score: claimedWord.score,
+                reverseWord: reverseWord || undefined
+              });
+            }
+            if (bonuses.includes('palindrome')) {
+              newBonusAnimations.push({
+                word: claimedWord.word,
+                positions: claimedWord.positions,
+                bonusType: 'palindrome',
+                score: claimedWord.score
+              });
+            }
+          }
+        }
+        
+        // Process bonuses sequentially, one at a time
+        const processNextBonus = (index: number) => {
+          if (index >= newBonusAnimations.length) {
+            prevClaimedWordsLengthRef.current = currentLength;
+            return;
+          }
+          
+          const bonusAnim = newBonusAnimations[index];
+          const tileKeys = new Set(bonusAnim.positions.map(pos => `${pos.x}-${pos.y}`));
+          let animationDuration = 2500;
+          
+          // Clear all previous animations first
+          setPalindromeTiles(new Set());
+          setEmordnilapTiles(new Set());
+          setDiagonalTiles(new Set());
+          setPalindromeBonus(null);
+          setEmordnilapBonus(null);
+          setDiagonalBonus(null);
+          setEmordnilapPositions([]);
+          setDiagonalPositions([]);
+          
+          // Show the appropriate animation based on bonus type
+          if (bonusAnim.bonusType === 'diagonal') {
+            setDiagonalTiles(tileKeys);
+            setDiagonalPositions(bonusAnim.positions);
+            setDiagonalBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              playerColor: getPlayerColor(myGamePlayerId)
+            });
+            animationDuration = 2500;
+            
+            setTimeout(() => {
+              setDiagonalTiles(new Set());
+              setDiagonalPositions([]);
+              setDiagonalBonus(null);
+            }, 2500);
+          } else if (bonusAnim.bonusType === 'emordnilap') {
+            setEmordnilapTiles(tileKeys);
+            setEmordnilapPositions(bonusAnim.positions);
+            setEmordnilapBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              reverseWord: bonusAnim.reverseWord || '',
+              playerColor: getPlayerColor(myGamePlayerId)
+            });
+            animationDuration = 3000;
+            
+            setTimeout(() => {
+              setEmordnilapTiles(new Set());
+              setEmordnilapPositions([]);
+              setEmordnilapBonus(null);
+            }, 3000);
+          } else if (bonusAnim.bonusType === 'palindrome') {
+            setPalindromeTiles(tileKeys);
+            setPalindromeBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              playerColor: getPlayerColor(myGamePlayerId)
+            });
+            animationDuration = 2500;
+            
+            setTimeout(() => {
+              setPalindromeTiles(new Set());
+              setPalindromeBonus(null);
+            }, 2500);
+          }
+          
+          // Process next bonus after current animation completes
+          setTimeout(() => {
+            // Clear all animations before showing next
+            setPalindromeTiles(new Set());
+            setEmordnilapTiles(new Set());
+            setDiagonalTiles(new Set());
+            setPalindromeBonus(null);
+            setEmordnilapBonus(null);
+            setDiagonalBonus(null);
+            setEmordnilapPositions([]);
+            setDiagonalPositions([]);
+            
+            // Small delay before next animation
+            setTimeout(() => {
+              processNextBonus(index + 1);
+            }, 300);
+          }, animationDuration);
+        };
+        
+        // Start processing from first bonus
+        if (newBonusAnimations.length > 0) {
+          processNextBonus(0);
+        } else {
+          prevClaimedWordsLengthRef.current = currentLength;
+        }
+      }
+    } else if (!isMultiplayer) {
+      // Reset when switching to local mode
+      prevClaimedWordsLengthRef.current = 0;
+    }
+  }, [socketGameState?.claimedWords, socketGameState?.board, isMultiplayer, room, playerId]);
 
   // Trigger falling animation for newly placed tiles in multiplayer mode
   useEffect(() => {
@@ -755,8 +928,151 @@ function App() {
 
         console.log('Word claims validated successfully! Score:', result.totalScore);
 
-        // Lock all blank tiles that were part of the submitted words
+        // Check for bonuses and trigger animations sequentially
+        // Process all words with bonuses, showing animations one by one
+        // Within each word, prioritize bonuses: Diagonal → Emordnilap → Palindrome
         const stateAfterSubmit = engine.getState();
+        
+        // Collect all bonus animations to show (flattened: word + bonus type)
+        type BonusAnimation = {
+          word: string;
+          positions: Position[];
+          bonusType: 'diagonal' | 'emordnilap' | 'palindrome';
+          score: number;
+          reverseWord?: string;
+        };
+        
+        const bonusAnimations: BonusAnimation[] = [];
+        
+        for (let i = 0; i < result.results.length; i++) {
+          const wordResult = result.results[i];
+          if (wordResult.valid && wordResult.word && wordResult.score !== undefined) {
+            const bonuses = wordResult.bonuses || [];
+            const wordPositions = validWords[i];
+            
+            // Add bonuses in priority order: Diagonal → Emordnilap → Palindrome
+            if (bonuses.includes('diagonal')) {
+              bonusAnimations.push({
+                word: wordResult.word,
+                positions: wordPositions,
+                bonusType: 'diagonal',
+                score: wordResult.score
+              });
+            }
+            if (bonuses.includes('emordnilap')) {
+              const reverseWord = getReverseWord(stateAfterSubmit.board, wordPositions);
+              bonusAnimations.push({
+                word: wordResult.word,
+                positions: wordPositions,
+                bonusType: 'emordnilap',
+                score: wordResult.score,
+                reverseWord: reverseWord || undefined
+              });
+            }
+            if (bonuses.includes('palindrome')) {
+              bonusAnimations.push({
+                word: wordResult.word,
+                positions: wordPositions,
+                bonusType: 'palindrome',
+                score: wordResult.score
+              });
+            }
+          }
+        }
+        
+        // Process bonuses sequentially, one at a time
+        const processNextBonus = (index: number) => {
+          if (index >= bonusAnimations.length) return;
+          
+          const bonusAnim = bonusAnimations[index];
+          const tileKeys = new Set(bonusAnim.positions.map(pos => `${pos.x}-${pos.y}`));
+          let animationDuration = 2500;
+          
+          // Clear all previous animations first
+          setPalindromeTiles(new Set());
+          setEmordnilapTiles(new Set());
+          setDiagonalTiles(new Set());
+          setPalindromeBonus(null);
+          setEmordnilapBonus(null);
+          setDiagonalBonus(null);
+          setEmordnilapPositions([]);
+          setDiagonalPositions([]);
+          
+          // Show the appropriate animation based on bonus type
+          if (bonusAnim.bonusType === 'diagonal') {
+            setDiagonalTiles(tileKeys);
+            setDiagonalPositions(bonusAnim.positions);
+            setDiagonalBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              playerColor: getPlayerColor(currentPlayer.id)
+            });
+            animationDuration = 2500;
+            
+            setTimeout(() => {
+              setDiagonalTiles(new Set());
+              setDiagonalPositions([]);
+              setDiagonalBonus(null);
+            }, 2500);
+          } else if (bonusAnim.bonusType === 'emordnilap') {
+            setEmordnilapTiles(tileKeys);
+            setEmordnilapPositions(bonusAnim.positions);
+            setEmordnilapBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              reverseWord: bonusAnim.reverseWord || '',
+              playerColor: getPlayerColor(currentPlayer.id)
+            });
+            animationDuration = 3000;
+            
+            setTimeout(() => {
+              setEmordnilapTiles(new Set());
+              setEmordnilapPositions([]);
+              setEmordnilapBonus(null);
+            }, 3000);
+          } else if (bonusAnim.bonusType === 'palindrome') {
+            setPalindromeTiles(tileKeys);
+            setPalindromeBonus({
+              show: true,
+              points: bonusAnim.score,
+              word: bonusAnim.word,
+              playerColor: getPlayerColor(currentPlayer.id)
+            });
+            animationDuration = 2500;
+            
+            setTimeout(() => {
+              setPalindromeTiles(new Set());
+              setPalindromeBonus(null);
+            }, 2500);
+          }
+          
+          // Process next bonus after current animation completes
+          setTimeout(() => {
+            // Clear all animations before showing next
+            setPalindromeTiles(new Set());
+            setEmordnilapTiles(new Set());
+            setDiagonalTiles(new Set());
+            setPalindromeBonus(null);
+            setEmordnilapBonus(null);
+            setDiagonalBonus(null);
+            setEmordnilapPositions([]);
+            setDiagonalPositions([]);
+            
+            // Small delay before next animation
+            setTimeout(() => {
+              processNextBonus(index + 1);
+            }, 300);
+          }, animationDuration);
+        };
+        
+        // Start processing from first bonus
+        if (bonusAnimations.length > 0) {
+          processNextBonus(0);
+        }
+
+        // Lock all blank tiles that were part of the submitted words
         for (const wordPositions of validWords) {
           for (const pos of wordPositions) {
             const tile = stateAfterSubmit.board[pos.y][pos.x];
@@ -1092,6 +1408,11 @@ function App() {
         onWordSelect={isMyTurn ? handleWordSelect : () => { }}
         tilesPlacedThisTurn={finalTilesPlacedThisTurn}
         onBlankTileEdit={isMyTurn ? handleBlankTileEdit : () => { }}
+        palindromeTiles={palindromeTiles}
+        emordnilapTiles={emordnilapTiles}
+        emordnilapPositions={emordnilapPositions}
+        diagonalTiles={diagonalTiles}
+        diagonalPositions={diagonalPositions}
       />
       <Rack 
         tiles={myPlayer.rack}
@@ -1135,6 +1456,34 @@ function App() {
         onConfirm={handleBlankTileConfirm}
         onCancel={handleBlankTileCancel}
       />
+      {palindromeBonus && (
+        <BonusOverlay
+          show={palindromeBonus.show}
+          text="Palindrome Bonus"
+          points={palindromeBonus.points}
+          playerColor={palindromeBonus.playerColor}
+          onComplete={() => setPalindromeBonus(null)}
+        />
+      )}
+      {emordnilapBonus && (
+        <BonusOverlay
+          show={emordnilapBonus.show}
+          text="Emordnilap Bonus"
+          points={emordnilapBonus.points}
+          playerColor={emordnilapBonus.playerColor}
+          reverseWord={emordnilapBonus.reverseWord}
+          onComplete={() => setEmordnilapBonus(null)}
+        />
+      )}
+      {diagonalBonus && (
+        <BonusOverlay
+          show={diagonalBonus.show}
+          text="Diagonal Bonus"
+          points={diagonalBonus.points}
+          playerColor={diagonalBonus.playerColor}
+          onComplete={() => setDiagonalBonus(null)}
+        />
+      )}
     </div>
   );
 }
