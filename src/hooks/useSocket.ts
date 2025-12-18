@@ -29,6 +29,7 @@ const getSocketUrl = (): string => {
 };
 
 const SOCKET_URL = getSocketUrl();
+console.log('🔌 Socket URL:', SOCKET_URL, 'from hostname:', window.location.hostname);
 
 // Types imported from server/types.ts
 
@@ -83,16 +84,24 @@ export function useSocket(): UseSocketReturn {
             autoConnect: true,
             reconnection: true,
             reconnectionAttempts: 5,
-            reconnectionDelay: 1000
+            reconnectionDelay: 1000,
+            transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+            upgrade: true,
+            rememberUpgrade: false
         });
 
         socketRef.current = socket;
 
         // Connection events
         socket.on('connect', () => {
-            console.log('🔌 Connected to server');
+            console.log('✅ Connected to server at', SOCKET_URL);
             setConnected(true);
             setPlayerId(socket.id || null);
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('❌ Socket connection error:', error.message, 'trying to connect to:', SOCKET_URL);
+            setError(`Connection failed: ${error.message}. Server URL: ${SOCKET_URL}`);
         });
 
         socket.on('disconnect', () => {
