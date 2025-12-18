@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import './App.css';
 import './styles.scss';
 import { GrabbleEngine } from './game-engine';
 import { GameStateManager } from './game-state-manager';
 import type { Tile, Position, WordClaim, Player, ClaimedWord } from './types';
 import { extractWordFromPositions, isValidWordLine, getReverseWord } from './word-detection';
+import { Trie, buildTrieFromDictionary, findFirstValidWord, getHintAtLevel, HintResult, HintSolution } from './hint-engine';
 import SetupModal from './components/SetupModal';
 import Navbar from './components/Navbar';
 import ScoreArea from './components/ScoreArea';
@@ -116,6 +117,16 @@ function App() {
   const [diagonalPositions, setDiagonalPositions] = useState<Position[]>([]); // Store word positions for diagonal animation
   const [diagonalBonus, setDiagonalBonus] = useState<{ show: boolean; points: number; word: string; playerColor: string } | null>(null);
 
+  // Hint system state
+  const [trie, setTrie] = useState<Trie | null>(null);
+  const [hintLevel, setHintLevel] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [hintResult, setHintResult] = useState<HintResult | null>(null);
+  const [hintMessage, setHintMessage] = useState<string>('');
+  const [hintedTileIndices, setHintedTileIndices] = useState<number[]>([]);  // Tiles to USE (golden)
+  const [swapHintedTileIndices, setSwapHintedTileIndices] = useState<number[]>([]);  // Tiles to SWAP (red)
+  const [hintedColumns, setHintedColumns] = useState<number[]>([]);
+  const cachedHintSolutionRef = useRef<HintSolution | null>(null);  // Cache raw solution (not level-specific result)
+
   // Helper function to show error modal
   const showError = (message: string) => {
     setErrorModal({ isOpen: true, message });
@@ -171,18 +182,55 @@ function App() {
     });
   }, []);
 
+  // Build Trie from dictionary for hint system
+  useEffect(() => {
+    if (dictionaryLoaded && dictionary.size > 0 && !trie) {
+      console.log('Building Trie from dictionary...');
+      const newTrie = buildTrieFromDictionary(dictionary);
+      setTrie(newTrie);
+      console.log('Trie built with', newTrie.getWordCount(), 'words');
+    }
+  }, [dictionaryLoaded, dictionary, trie]);
+
+  // Reset hint state when:
+  // - Tiles are placed this turn (tilesPlacedThisTurn changes)
+  // - Turn changes (currentPlayerId changes)
+  // - Words are claimed (claimedWords changes)
+  // - Rack changes (myPlayer's rack length changes)
+  const currentClaimedWordsLength = isMultiplayer
+    ? socketGameState?.claimedWords?.length || 0
+    : gameManager?.getState()?.claimedWords?.length || 0;
+
+  const currentRackLength = isMultiplayer
+    ? ((): number => {
+      if (!socketGameState || !room || !playerId) return 0;
+      const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+      return socketGameState.players[myRoomPlayerIndex]?.rack?.length || 0;
+    })()
+    : gameManager?.getCurrentPlayer()?.rack?.length || 0;
+
+  useEffect(() => {
+    setHintLevel(0);
+    setHintResult(null);
+    setHintMessage('');
+    setHintedTileIndices([]);
+    setSwapHintedTileIndices([]);
+    setHintedColumns([]);
+    cachedHintSolutionRef.current = null;  // Clear cached solution
+  }, [tilesPlacedThisTurn.length, socketGameState?.currentPlayerId, currentClaimedWordsLength, currentRackLength]);
+
   // Handle bonuses from multiplayer socket events
   // Process multiple words with bonuses sequentially
   useEffect(() => {
     if (isMultiplayer && socketGameState && room && playerId) {
       const claimedWords = socketGameState.claimedWords || [];
       const currentLength = claimedWords.length;
-      
+
       // Only check if new words were added
       if (currentLength > prevClaimedWordsLengthRef.current) {
         const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
         const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
-        
+
         // Collect all bonus animations to show (flattened: word + bonus type)
         // Priority within each word: Diagonal → Emordnilap → Palindrome
         type BonusAnimation = {
@@ -192,14 +240,14 @@ function App() {
           score: number;
           reverseWord?: string;
         };
-        
+
         const newBonusAnimations: BonusAnimation[] = [];
-        
+
         for (let i = prevClaimedWordsLengthRef.current; i < currentLength; i++) {
           const claimedWord = claimedWords[i];
           if (claimedWord && claimedWord.playerId === myGamePlayerId) {
             const bonuses = claimedWord.bonuses || [];
-            
+
             // Add bonuses in priority order: Diagonal → Emordnilap → Palindrome
             if (bonuses.includes('diagonal')) {
               newBonusAnimations.push({
@@ -229,18 +277,18 @@ function App() {
             }
           }
         }
-        
+
         // Process bonuses sequentially, one at a time
         const processNextBonus = (index: number) => {
           if (index >= newBonusAnimations.length) {
             prevClaimedWordsLengthRef.current = currentLength;
             return;
           }
-          
+
           const bonusAnim = newBonusAnimations[index];
           const tileKeys = new Set(bonusAnim.positions.map(pos => `${pos.x}-${pos.y}`));
           let animationDuration = 2500;
-          
+
           // Clear all previous animations first
           setPalindromeTiles(new Set());
           setEmordnilapTiles(new Set());
@@ -250,7 +298,7 @@ function App() {
           setDiagonalBonus(null);
           setEmordnilapPositions([]);
           setDiagonalPositions([]);
-          
+
           // Show the appropriate animation based on bonus type
           if (bonusAnim.bonusType === 'diagonal') {
             setDiagonalTiles(tileKeys);
@@ -262,7 +310,7 @@ function App() {
               playerColor: getPlayerColor(myGamePlayerId)
             });
             animationDuration = 2500;
-            
+
             setTimeout(() => {
               setDiagonalTiles(new Set());
               setDiagonalPositions([]);
@@ -279,7 +327,7 @@ function App() {
               playerColor: getPlayerColor(myGamePlayerId)
             });
             animationDuration = 3000;
-            
+
             setTimeout(() => {
               setEmordnilapTiles(new Set());
               setEmordnilapPositions([]);
@@ -294,13 +342,13 @@ function App() {
               playerColor: getPlayerColor(myGamePlayerId)
             });
             animationDuration = 2500;
-            
+
             setTimeout(() => {
               setPalindromeTiles(new Set());
               setPalindromeBonus(null);
             }, 2500);
           }
-          
+
           // Process next bonus after current animation completes
           setTimeout(() => {
             // Clear all animations before showing next
@@ -312,14 +360,14 @@ function App() {
             setDiagonalBonus(null);
             setEmordnilapPositions([]);
             setDiagonalPositions([]);
-            
+
             // Small delay before next animation
             setTimeout(() => {
               processNextBonus(index + 1);
             }, 300);
           }, animationDuration);
         };
-        
+
         // Start processing from first bonus
         if (newBonusAnimations.length > 0) {
           processNextBonus(0);
@@ -449,10 +497,98 @@ function App() {
     setShowSetup(false);
   };
 
+  // Handle hint request - progressive levels
+  const handleHint = useCallback(() => {
+    const currentState = isMultiplayer ? socketGameState : gameManager?.getState();
+    const currentRack = isMultiplayer ? ((): Tile[] => {
+      if (!socketGameState || !room || !playerId) return [];
+      const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+      return socketGameState.players[myRoomPlayerIndex]?.rack || [];
+    })() : gameManager?.getCurrentPlayer()?.rack || [];
+
+    if (!trie || !currentState || currentRack.length === 0) {
+      setHintMessage('⚠️ Cannot get hint right now');
+      return;
+    }
+
+    // Ban hints until at least one word has been claimed (first complete turn finished)
+    const hasCompletedTurns = (currentState.claimedWords?.length || 0) > 0;
+    if (!hasCompletedTurns) {
+      setHintMessage('⚠️ Hints are not available until a word has been played. Complete your first move!');
+      return;
+    }
+
+    // Find solution (cached or new)
+    // Only use cache if hintLevel > 0 (meaning we already calculated on this turn)
+    let solution: HintSolution | null;
+    if (hintLevel > 0) {
+      // Use cached solution for progressive levels
+      solution = cachedHintSolutionRef.current;
+    } else {
+      // First hint request this turn - calculate fresh and cache
+      solution = findFirstValidWord(currentState.board, currentRack, trie);
+      cachedHintSolutionRef.current = solution;
+      console.log('🔍 Hint search result:', solution ? `Found: ${solution.word}` : 'No words found');
+    }
+
+    // Generate result at current level from solution
+    const result = getHintAtLevel(solution, currentRack, hintLevel);
+    setHintResult(result);
+
+    // Generate message and set highlighting based on result
+    if (!result.hasMoves) {
+      setHintMessage('⚠️ No single-tile hint found. Consider swapping tiles?');
+      // Highlight swap suggestions (red glow) - these are tiles to SWAP
+      setHintedTileIndices([]);  // Clear playable hints
+      setSwapHintedTileIndices(result.tilesToSwap || []);
+      setHintedColumns([]);
+    } else {
+      // Clear swap hints when moves are available
+      setSwapHintedTileIndices([]);
+      // Set playable tile highlighting from result
+      setHintedTileIndices(result.usefulTiles || []);
+      setHintedColumns(result.targetColumns || []);
+
+      switch (hintLevel) {
+        case 0:
+          setHintMessage('✅ Words are possible! Click again for more detail.');
+          // Clear highlighting at level 0
+          setHintedTileIndices([]);
+          setHintedColumns([]);
+          break;
+        case 1:
+          setHintMessage('💡 Highlighted tile(s) can form a word.');
+          break;
+        case 2:
+          // Partial word hint (less obvious)
+          if (result.partialWord) {
+            setHintMessage(`🔤 Look for: ${result.partialWord} (${result.wordLength} letters)`);
+          } else {
+            setHintMessage(`🔤 Look for a ${result.wordLength || '?'}-letter word`);
+          }
+          break;
+        case 3:
+          // Column hint (penultimate - most helpful before full reveal)
+          setHintMessage(`📍 Place highlighted tile in column ${(result.targetColumns?.[0] ?? 0) + 1}`);
+          break;
+        case 4:
+          if (result.fullSolution) {
+            setHintMessage(`🎯 Word: ${result.fullSolution.word} (Column ${result.fullSolution.column + 1})`);
+          }
+          break;
+      }
+    }
+
+    // Increment level for next request (max 4)
+    if (hintLevel < 4) {
+      setHintLevel((prev) => Math.min(prev + 1, 4) as 0 | 1 | 2 | 3 | 4);
+    }
+  }, [isMultiplayer, socketGameState, room, playerId, gameManager, trie, hintLevel]);
+
   const handleTileSelect = (index: number) => {
     if (isPlacingTiles) return;
-    setSelectedTiles(prev => 
-      prev.includes(index) 
+    setSelectedTiles(prev =>
+      prev.includes(index)
         ? prev.filter(i => i !== index)
         : [...prev, index]
     );
@@ -460,10 +596,10 @@ function App() {
 
   const handleColumnClick = (column: number) => {
     if (!gameManager || !engine || selectedTiles.length === 0) return;
-    
+
     const currentPlayer = gameManager.getCurrentPlayer();
     const tile = currentPlayer.rack[selectedTiles[0]];
-    
+
     setPendingPlacements(prev => [...prev, { column, tile }]);
     setSelectedTiles(prev => prev.slice(1));
     setIsPlacingTiles(true);
@@ -781,9 +917,9 @@ function App() {
 
     // Local mode: use engine directly
     if (!gameManager || !engine) return;
-    
+
     const currentPlayer = gameManager.getCurrentPlayer();
-    
+
     // Check if we have tiles placed this turn OR pending placements
     const hasPlacedTiles = tilesPlacedThisTurn.length > 0 || pendingPlacements.length > 0;
 
@@ -795,20 +931,20 @@ function App() {
     try {
       // Handle pending placements (click-based placement)
       let newlyPlacedFromPending: Position[] = [];
-    if (pendingPlacements.length > 0) {
+      if (pendingPlacements.length > 0) {
         // Remove tiles from rack before placing (in the reverse order to preserve indices)
         const tilesToPlace = pendingPlacements.map(p => p.tile);
         const newRack = currentPlayer.rack.filter((tile, idx) => {
-          const placementIdx = tilesToPlace.findIndex(p => 
+          const placementIdx = tilesToPlace.findIndex(p =>
             p.letter === tile.letter && p.points === tile.points
           );
           return placementIdx === -1;
         });
         currentPlayer.rack = newRack;
-        
+
         engine.placeTiles(pendingPlacements, currentPlayer.id);
         setIsPlacingTiles(false);
-        
+
         // Get newly placed positions (after gravity)
         const state = engine.getState();
         for (const placement of pendingPlacements) {
@@ -874,7 +1010,7 @@ function App() {
               wordPositions.some(pos => pos.x === placedPos.x && pos.y === placedPos.y)
             )
           );
-          
+
           if (!allPlacedTilesInWords) {
             const unclaimedTiles = allNewlyPlacedTiles.filter(placedPos =>
               !validWords.some(wordPositions =>
@@ -917,7 +1053,7 @@ function App() {
           const errorMessages = result.results
             .map(r => r.error)
             .filter((error): error is string => error !== undefined && error.length > 0);
-          
+
           if (errorMessages.length > 0) {
             showError('Invalid word claims: ' + errorMessages.join('. '));
           } else {
@@ -932,7 +1068,7 @@ function App() {
         // Process all words with bonuses, showing animations one by one
         // Within each word, prioritize bonuses: Diagonal → Emordnilap → Palindrome
         const stateAfterSubmit = engine.getState();
-        
+
         // Collect all bonus animations to show (flattened: word + bonus type)
         type BonusAnimation = {
           word: string;
@@ -941,15 +1077,15 @@ function App() {
           score: number;
           reverseWord?: string;
         };
-        
+
         const bonusAnimations: BonusAnimation[] = [];
-        
+
         for (let i = 0; i < result.results.length; i++) {
           const wordResult = result.results[i];
           if (wordResult.valid && wordResult.word && wordResult.score !== undefined) {
             const bonuses = wordResult.bonuses || [];
             const wordPositions = validWords[i];
-            
+
             // Add bonuses in priority order: Diagonal → Emordnilap → Palindrome
             if (bonuses.includes('diagonal')) {
               bonusAnimations.push({
@@ -979,15 +1115,15 @@ function App() {
             }
           }
         }
-        
+
         // Process bonuses sequentially, one at a time
         const processNextBonus = (index: number) => {
           if (index >= bonusAnimations.length) return;
-          
+
           const bonusAnim = bonusAnimations[index];
           const tileKeys = new Set(bonusAnim.positions.map(pos => `${pos.x}-${pos.y}`));
           let animationDuration = 2500;
-          
+
           // Clear all previous animations first
           setPalindromeTiles(new Set());
           setEmordnilapTiles(new Set());
@@ -997,7 +1133,7 @@ function App() {
           setDiagonalBonus(null);
           setEmordnilapPositions([]);
           setDiagonalPositions([]);
-          
+
           // Show the appropriate animation based on bonus type
           if (bonusAnim.bonusType === 'diagonal') {
             setDiagonalTiles(tileKeys);
@@ -1009,7 +1145,7 @@ function App() {
               playerColor: getPlayerColor(currentPlayer.id)
             });
             animationDuration = 2500;
-            
+
             setTimeout(() => {
               setDiagonalTiles(new Set());
               setDiagonalPositions([]);
@@ -1026,7 +1162,7 @@ function App() {
               playerColor: getPlayerColor(currentPlayer.id)
             });
             animationDuration = 3000;
-            
+
             setTimeout(() => {
               setEmordnilapTiles(new Set());
               setEmordnilapPositions([]);
@@ -1041,13 +1177,13 @@ function App() {
               playerColor: getPlayerColor(currentPlayer.id)
             });
             animationDuration = 2500;
-            
+
             setTimeout(() => {
               setPalindromeTiles(new Set());
               setPalindromeBonus(null);
             }, 2500);
           }
-          
+
           // Process next bonus after current animation completes
           setTimeout(() => {
             // Clear all animations before showing next
@@ -1059,14 +1195,14 @@ function App() {
             setDiagonalBonus(null);
             setEmordnilapPositions([]);
             setDiagonalPositions([]);
-            
+
             // Small delay before next animation
             setTimeout(() => {
               processNextBonus(index + 1);
             }, 300);
           }, animationDuration);
         };
-        
+
         // Start processing from first bonus
         if (bonusAnimations.length > 0) {
           processNextBonus(0);
@@ -1084,25 +1220,25 @@ function App() {
 
         setSelectedWords([]);
         setWordDirection(null);
-        }
-        
+      }
+
       // Refill rack and advance turn (only after submitting)
-        engine.refillPlayerRack(currentPlayer.id);
-        engine.advanceTurn();
+      engine.refillPlayerRack(currentPlayer.id);
+      engine.advanceTurn();
 
       // Clear all turn state
       setWordDirection(null);
       setTilesPlacedThisTurn([]);
       setPendingPlacements([]);
       setSelectedTiles([]);
-        
-        // Check win condition
-        const winnerId = engine.checkWinCondition();
-        if (winnerId !== null) {
-          const winner = gameManager.getPlayer(winnerId);
+
+      // Check win condition
+      const winnerId = engine.checkWinCondition();
+      if (winnerId !== null) {
+        const winner = gameManager.getPlayer(winnerId);
         showError(`Game Over! ${winner?.name} wins with ${winner?.score} points!`);
-        }
-        
+      }
+
       // Force re-render by updating render key
       setRenderKey(prev => prev + 1);
 
@@ -1166,7 +1302,7 @@ function App() {
         setSelectedWords([]);
         setTilesPlacedThisTurn([]);
         setPendingPlacements([]);
-        
+
         // Force re-render
         setGameManager(gameManager);
         setEngine(engine);
@@ -1174,11 +1310,11 @@ function App() {
 
         console.log('Tiles swapped, turn advanced');
       }
-      } catch (error) {
+    } catch (error) {
       console.error('Error swapping tiles:', error);
       showError(`Error swapping tiles: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setShowSwapConfirm(false);
-      }
+    }
   };
 
   const cancelSwapTiles = () => {
@@ -1259,14 +1395,14 @@ function App() {
     // Multiplayer mode: check socket game state
     if (isMultiplayer) {
       if (!socketGameState || !room || playerId === null) return;
-      
+
       const myIdx = room.players.findIndex(rp => rp.id === playerId);
       if (myIdx === -1) return;
-      
+
       const tile = socketGameState.board[y]?.[x];
       const isMyTurn = socketGameState.currentPlayerId === myIdx;
       const finalTilesPlacedThisTurn = socketTilesPlacedThisTurn || [];
-      
+
       // Only allow editing if:
       // 1. It's a blank tile
       // 2. It belongs to current player (me)
@@ -1396,7 +1532,7 @@ function App() {
     <div className="game-container" key={renderKey}>
       <Navbar currentPlayerName={isMyTurn ? `Your turn (${myPlayer.name})` : `${turnIndicatorName}'s turn`} />
       <ScoreArea players={state.players} currentPlayerId={state.currentPlayerId} />
-      <Board 
+      <Board
         board={state.board}
         selectedPositions={selectedWordPositions}
         isPlacingTiles={isPlacingTiles}
@@ -1414,7 +1550,7 @@ function App() {
         diagonalTiles={diagonalTiles}
         diagonalPositions={diagonalPositions}
       />
-      <Rack 
+      <Rack
         tiles={myPlayer.rack}
         selectedIndices={selectedTiles}
         onTileClick={handleTileSelect}
@@ -1423,6 +1559,8 @@ function App() {
         }}
         playerId={myPlayer.id}
         disabled={!isMyTurn}
+        hintedIndices={hintedTileIndices}
+        swapHintedIndices={swapHintedTileIndices}
       />
       <ActionButtons
         canSubmit={tilesPlacedThisTurn.length > 0 || pendingPlacements.length > 0 || selectedWords.length > 0}
@@ -1436,6 +1574,10 @@ function App() {
           setSelectedWords([]);
           setRenderKey(prev => prev + 1);
         }}
+        onHint={handleHint}
+        hintLevel={hintLevel}
+        canHint={isMyTurn && trie !== null}
+        hintMessage={hintMessage}
       />
       <WordsPanel claimedWords={state.claimedWords} players={state.players} />
       <ErrorModal
