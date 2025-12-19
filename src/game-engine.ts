@@ -75,7 +75,7 @@ export class GrabbleEngine {
             if (column < 0 || column >= 7) {
                 throw new Error(`Invalid column: ${column}`);
             }
-            
+
             // Find first empty cell in column (starting from top)
             let placed = false;
             for (let row = 0; row < 7; row++) {
@@ -88,7 +88,7 @@ export class GrabbleEngine {
                     break;
                 }
             }
-            
+
             if (!placed) {
                 throw new Error(`Column ${column} is full`);
             }
@@ -348,10 +348,32 @@ export class GrabbleEngine {
             throw new Error(`Player ${playerId} not found`);
         }
 
-        while (player.rack.length < 7 && this.state.tileBag.length > 0) {
-            const tile = this.state.tileBag.pop()!;
-            player.rack.push(tile);
+        while (player.rack.length < 7) {
+            if (this.state.tileBag.length > 0) {
+                const tile = this.state.tileBag.pop()!;
+                player.rack.push(tile);
+            } else if (this.state.gameMode === 'solo') {
+                // Solo mode: infinite tiles - create new random tile
+                const newBag = GrabbleEngine.createTileBag();
+                this.state.tileBag = newBag;
+            } else {
+                // Normal mode: bag exhausted
+                break;
+            }
         }
+    }
+
+    /**
+     * Check if the board is completely full (game over condition for solo mode)
+     */
+    isBoardFull(): boolean {
+        for (let col = 0; col < 7; col++) {
+            // Check if top row of each column is empty
+            if (this.state.board[0][col] === null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -394,7 +416,7 @@ export class GrabbleEngine {
         const currentTurnOrder = currentPlayer.turnOrder;
         const nextTurnOrder = (currentTurnOrder + 1) % this.state.players.length;
         const nextPlayer = this.state.players.find(p => p.turnOrder === nextTurnOrder);
-        
+
         if (nextPlayer) {
             this.state.currentPlayerId = nextPlayer.id;
         }
@@ -430,8 +452,8 @@ export class GrabbleEngine {
     }
 
     /**
-     * Remove tiles from a player's rack by indices
-     * Returns array of removed tiles
+     * Remove specific tiles from player's rack by index
+     * Returns the removed tiles
      */
     removeTilesFromRack(playerId: number, indices: number[]): Tile[] {
         const player = this.state.players.find(p => p.id === playerId);
@@ -439,50 +461,48 @@ export class GrabbleEngine {
             throw new Error(`Player ${playerId} not found`);
         }
 
+        const sortedIndices = [...indices].sort((a, b) => b - a);
         const removedTiles: Tile[] = [];
-        for (const index of indices.sort((a, b) => b - a)) { // Sort descending to remove from end
+
+        for (const index of sortedIndices) {
             if (index >= 0 && index < player.rack.length) {
-                removedTiles.push(player.rack.splice(index, 1)[0]);
+                removedTiles.push(player.rack[index]);
+                player.rack.splice(index, 1);
             }
         }
 
-        return removedTiles;
+        return removedTiles.reverse();
     }
 
     /**
-     * Return a tile to a player's rack
+     * Return a single tile to player's rack
      */
     returnTileToRack(playerId: number, tile: Tile): void {
         const player = this.state.players.find(p => p.id === playerId);
         if (!player) {
             throw new Error(`Player ${playerId} not found`);
         }
-
-        // Remove playerId from tile before returning to rack
-        const { playerId: _, ...tileWithoutPlayerId } = tile;
-        player.rack.push(tileWithoutPlayerId);
+        player.rack.push(tile);
     }
 
     /**
      * Set the letter for a blank tile on the board
-     * Returns true if successful, false otherwise
      */
     setBlankTileLetter(x: number, y: number, letter: string, playerId: number): boolean {
-        if (x < 0 || x >= 7 || y < 0 || y >= 7) {
-            return false;
-        }
+        if (x < 0 || x >= 7 || y < 0 || y >= 7) return false;
 
         const tile = this.state.board[y][x];
-        if (!tile || tile.letter !== ' ') {
-            return false;
+
+        if (tile &&
+            tile.letter === ' ' &&
+            tile.isBlank &&
+            tile.playerId === playerId &&
+            !tile.isBlankLocked) {
+            tile.blankLetter = letter.toUpperCase();
+            tile.isBlankLocked = true;
+            return true;
         }
 
-        // Only allow setting if the tile belongs to the player or if it's not locked
-        if (tile.playerId !== playerId && tile.isBlankLocked) {
-            return false;
-        }
-
-        tile.blankLetter = letter.toUpperCase();
-        return true;
+        return false;
     }
 }

@@ -7,6 +7,7 @@ import type { Tile, Position, WordClaim, Player, ClaimedWord } from './types';
 import { extractWordFromPositions, isValidWordLine, getReverseWord } from './word-detection';
 import { Trie, buildTrieFromDictionary, findFirstValidWord, getHintAtLevel, HintResult, HintSolution } from './hint-engine';
 import { initSounds, playTileDropSound } from './utils/sounds';
+import { getHighScore, updateHighScoreIfBetter } from './utils/highScore';
 import SetupModal from './components/SetupModal';
 import Navbar from './components/Navbar';
 import ScoreArea from './components/ScoreArea';
@@ -146,6 +147,11 @@ function App() {
   const [swapHintedTileIndices, setSwapHintedTileIndices] = useState<number[]>([]);  // Tiles to SWAP (red)
   const [hintedColumns, setHintedColumns] = useState<number[]>([]);
   const cachedHintSolutionRef = useRef<HintSolution | null>(null);  // Cache raw solution (not level-specific result)
+
+  // Solo mode state
+  const [highScore, setHighScore] = useState<number>(getHighScore());
+  const [soloGameOver, setSoloGameOver] = useState(false);
+  const [isNewHighScore, setIsNewHighScore] = useState(false);
 
   // Helper function to show error modal
   const showError = (message: string) => {
@@ -572,12 +578,37 @@ function App() {
     }
   }, [isMultiplayer, socketGameState?.currentPlayerId, room, playerId]);
 
-  const handleStartGame = (numPlayers: number, playerNames: string[], targetScore: number) => {
+  const handleStartGame = (
+    numPlayers: number,
+    playerNames: string[],
+    targetScore: number,
+    hintsEnabled: boolean = true,
+    gameMode: 'normal' | 'solo' = 'normal',
+    zenMode: boolean = false
+  ) => {
     const manager = GameStateManager.createNewGame(numPlayers, playerNames, targetScore);
     const gameEngine = manager.getEngine();
+
+    // Set game settings on state
+    const state = manager.getState();
+    state.hintsEnabled = hintsEnabled;
+    state.gameMode = gameMode;
+    state.zenMode = zenMode;
+
     setGameManager(manager);
     setEngine(gameEngine);
     setShowSetup(false);
+
+    // Reset hint state for new game
+    setHintLevel(0);
+    setHintMessage('');
+    setHintedTileIndices([]);
+    setSwapHintedTileIndices([]);
+    cachedHintSolutionRef.current = null;
+
+    // Reset solo mode state
+    setSoloGameOver(false);
+    setIsNewHighScore(false);
   };
 
   // Handle hint request - progressive levels
@@ -640,7 +671,13 @@ function App() {
           setHintedColumns([]);
           break;
         case 1:
-          setHintMessage('💡 Highlighted tile(s) can form a word.');
+          // Show number of tiles needed (depth indicator)
+          const tileCount = result.usefulTiles?.length || 1;
+          if (tileCount === 2) {
+            setHintMessage('💡 Highlighted tiles can form a word together (2-tile move).');
+          } else {
+            setHintMessage('💡 Highlighted tile can form a word.');
+          }
           break;
         case 2:
           // Partial word hint (less obvious)
@@ -652,11 +689,20 @@ function App() {
           break;
         case 3:
           // Column hint (penultimate - most helpful before full reveal)
-          setHintMessage(`📍 Place highlighted tile in column ${(result.targetColumns?.[0] ?? 0) + 1}`);
+          if (result.targetColumns && result.targetColumns.length >= 2) {
+            setHintMessage(`📍 Place tiles in columns ${result.targetColumns[0] + 1} and ${result.targetColumns[1] + 1}`);
+          } else {
+            setHintMessage(`📍 Place highlighted tile in column ${(result.targetColumns?.[0] ?? 0) + 1}`);
+          }
           break;
         case 4:
           if (result.fullSolution) {
-            setHintMessage(`🎯 Word: ${result.fullSolution.word} (Column ${result.fullSolution.column + 1})`);
+            const sol = result.fullSolution;
+            if (sol.depth === 2) {
+              setHintMessage(`🎯 Word: ${sol.word} (Columns ${sol.columns[0] + 1}, ${sol.columns[1] + 1})`);
+            } else {
+              setHintMessage(`🎯 Word: ${sol.word} (Column ${sol.column + 1})`);
+            }
           }
           break;
       }
@@ -1650,7 +1696,24 @@ function App() {
 
       // Refill rack and advance turn (only after submitting)
       engine.refillPlayerRack(currentPlayer.id);
-      engine.advanceTurn();
+
+      // Solo mode: check for game over (board full)
+      const isSoloMode = gameManager.getState().gameMode === 'solo';
+      if (isSoloMode) {
+        if (engine.isBoardFull()) {
+          // Game over in solo mode
+          const finalScore = gameManager.getCurrentPlayer()?.score || 0;
+          const isNewHS = updateHighScoreIfBetter(finalScore);
+          setIsNewHighScore(isNewHS);
+          if (isNewHS) {
+            setHighScore(finalScore);
+          }
+          setSoloGameOver(true);
+        }
+        // In solo mode, don't advance turn (always same player)
+      } else {
+        engine.advanceTurn();
+      }
 
       // Clear all turn state
       setWordDirection(null);
@@ -1660,11 +1723,13 @@ function App() {
       // Clear column fall queue when turn ends
       columnFallQueue.current.clear();
 
-      // Check win condition
-      const winnerId = engine.checkWinCondition();
-      if (winnerId !== null) {
-        const winner = gameManager.getPlayer(winnerId);
-        showError(`Game Over! ${winner?.name} wins with ${winner?.score} points!`);
+      // Check win condition (only for non-solo mode)
+      if (!isSoloMode) {
+        const winnerId = engine.checkWinCondition();
+        if (winnerId !== null) {
+          const winner = gameManager.getPlayer(winnerId);
+          showError(`Game Over! ${winner?.name} wins with ${winner?.score} points!`);
+        }
       }
 
       // Force re-render by updating render key
@@ -1964,7 +2029,18 @@ function App() {
         onToggleSound={handleToggleSound}
         soundEnabled={soundEnabled}
       />
-      <ScoreArea players={state.players} currentPlayerId={state.currentPlayerId} />
+      {/* Solo mode: custom score display (or hide in zen mode) */}
+      {state.gameMode === 'solo' ? (
+        !state.zenMode && (
+          <div className="solo-score-display">
+            <div className="current-score-label">Score</div>
+            <div className="current-score">{myPlayer?.score || 0}</div>
+            <div className="high-score-info">🏅 Best: {highScore}</div>
+          </div>
+        )
+      ) : (
+        <ScoreArea players={state.players} currentPlayerId={state.currentPlayerId} />
+      )}
       <div className="board-and-words-container">
         <div className="board-container">
           <Board
@@ -2018,7 +2094,11 @@ function App() {
             setSelectedWords([]);
             setRenderKey(prev => prev + 1);
           }}
-          onHint={handleHint}
+          onHint={
+            isMultiplayer
+              ? (room?.hintsEnabled !== false ? handleHint : undefined)
+              : (engine?.getState().hintsEnabled !== false ? handleHint : undefined)
+          }
           hintLevel={hintLevel}
           canHint={isMyTurn && trie !== null}
           hintMessage={hintMessage}
@@ -2091,6 +2171,31 @@ function App() {
           }
         }}
       />
+      {/* Solo Game Over Modal */}
+      {soloGameOver && (
+        <div className="solo-game-over-modal">
+          <div className="modal-content">
+            <h2>🎮 Game Over!</h2>
+            <div className="final-score">{myPlayer?.score || 0}</div>
+            {isNewHighScore ? (
+              <div className="high-score new-high-score">🏆 New High Score!</div>
+            ) : (
+              <div className="high-score">🏅 High Score: {highScore}</div>
+            )}
+            <div className="btn-group">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setSoloGameOver(false);
+                  setShowSetup(true);
+                }}
+              >
+                🔄 Play Again
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 }
