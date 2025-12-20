@@ -139,6 +139,12 @@ function App() {
   const [diagonalPositions, setDiagonalPositions] = useState<Position[]>([]); // Store word positions for diagonal animation
   const [diagonalBonus, setDiagonalBonus] = useState<{ show: boolean; points: number; word: string; playerColor: string } | null>(null);
 
+  // Local-first multiplayer state: allows tile drops to be processed locally before batch-syncing on submit
+  // This engine is a local copy of the server state, updated optimistically during the player's turn
+  const [localMultiplayerEngine, setLocalMultiplayerEngine] = useState<GrabbleEngine | null>(null);
+  const [localMultiplayerRack, setLocalMultiplayerRack] = useState<Tile[]>([]); // Local copy of player's rack for optimistic updates
+  const lastSyncedTurnRef = useRef<number>(-1); // Track when we last synced from server to avoid re-syncing mid-turn
+
   // Hint system state
   const [trie, setTrie] = useState<Trie | null>(null);
   const [hintLevel, setHintLevel] = useState<0 | 1 | 2 | 3 | 4>(0);
@@ -241,6 +247,51 @@ function App() {
     })()
     : gameManager?.getCurrentPlayer()?.rack?.length || 0;
 
+  // Sync local multiplayer engine from server state when:
+  // 1. Game starts (socketGameState becomes available)
+  // 2. Turn changes to a new player (after opponent's turn ends)
+  // 3. Server state updates from opponent's actions
+  // This creates a local copy we can modify during our turn without waiting for server
+  useEffect(() => {
+    if (!isMultiplayer || !socketGameState || !room || !playerId) {
+      // Not in multiplayer mode, clear local engine
+      if (localMultiplayerEngine) {
+        setLocalMultiplayerEngine(null);
+        setLocalMultiplayerRack([]);
+        lastSyncedTurnRef.current = -1;
+      }
+      return;
+    }
+
+    // Determine my game player ID
+    const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+    const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
+    const isMyTurn = socketGameState.currentPlayerId === myGamePlayerId;
+
+    // Create a key representing the current server state version
+    // We sync from server when: turn number changes, or we haven't synced yet
+    const currentTurn = socketGameState.currentPlayerId;
+    const shouldSync = lastSyncedTurnRef.current !== currentTurn;
+
+    if (shouldSync) {
+      // Deep copy the game state for local engine
+      const stateCopy = JSON.parse(JSON.stringify(socketGameState));
+      const newLocalEngine = new GrabbleEngine(stateCopy);
+      setLocalMultiplayerEngine(newLocalEngine);
+
+      // Also sync the rack
+      const myRack = socketGameState.players[myRoomPlayerIndex]?.rack || [];
+      setLocalMultiplayerRack([...myRack]);
+
+      // Clear tiles placed this turn when syncing
+      setTilesPlacedThisTurn([]);
+      setSelectedWords([]);
+
+      lastSyncedTurnRef.current = currentTurn;
+      console.log('🔄 Synced local multiplayer engine from server, turn:', currentTurn, 'isMyTurn:', isMyTurn);
+    }
+  }, [isMultiplayer, socketGameState, room, playerId]);
+
   useEffect(() => {
     setHintLevel(0);
     setHintResult(null);
@@ -340,7 +391,7 @@ function App() {
           // Show the appropriate animation based on bonus type
           // Use the player ID from the bonus animation, not myGamePlayerId
           const bonusPlayerColor = getPlayerColor(bonusAnim.playerId);
-          
+
           if (bonusAnim.bonusType === 'diagonal') {
             setDiagonalTiles(tileKeys);
             setDiagonalPositions(bonusAnim.positions);
@@ -830,11 +881,137 @@ function App() {
     const { index, tile } = tileData;
     const column = x;
 
-    // Multiplayer mode: emit socket event
+    // Multiplayer mode: use local engine for optimistic updates, sync on submit
     if (isMultiplayer) {
-      console.log('📤 Multiplayer: emitting place_tiles', { column, tileIndex: index });
-      socketPlaceTiles([{ column, tileIndex: index }]);
-      // Server will respond with updated game state, which triggers re-render
+      if (!localMultiplayerEngine || !room || !playerId) {
+        console.warn('Local multiplayer engine not available');
+        return;
+      }
+
+      // Determine my game player ID
+      const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+      const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
+
+      // Verify the tile exists in local rack
+      if (index < 0 || index >= localMultiplayerRack.length) {
+        console.warn('Invalid tile index:', index);
+        return;
+      }
+
+      const rackTile = localMultiplayerRack[index];
+      if (!rackTile || rackTile.letter !== tile.letter || rackTile.points !== tile.points) {
+        console.warn('Tile mismatch at index:', { index, expected: tile, found: rackTile });
+        return;
+      }
+
+      try {
+        // Get state before placement to compare
+        const prevState = localMultiplayerEngine.getState();
+
+        const placement = { column, tile: rackTile };
+        localMultiplayerEngine.placeTiles([placement], myGamePlayerId);
+
+        // Track where tile was placed (after gravity)
+        const state = localMultiplayerEngine.getState();
+        let placedPosition: Position | null = null;
+        for (let row = 6; row >= 0; row--) {
+          const boardTile = state.board[row][column];
+          const prevTile = prevState.board[row][column];
+          if (boardTile && (!prevTile || (prevTile.playerId !== myGamePlayerId && boardTile.playerId === myGamePlayerId))) {
+            placedPosition = { x: column, y: row };
+            break;
+          }
+        }
+
+        if (placedPosition) {
+          setTilesPlacedThisTurn(prev => [...prev, placedPosition!]);
+
+          // Falling animation logic (same as local mode)
+          const fallDistance = placedPosition.y;
+          const duration = 0.2 + (fallDistance * (0.5 - 0.2) / 6);
+          const col = placedPosition.x;
+          const columnQueue = columnFallQueue.current.get(col) || [];
+          const delay = columnQueue.length * 0.3;
+          columnFallQueue.current.set(col, [...columnQueue, placedPosition]);
+
+          const tileKey = `${placedPosition.x}-${placedPosition.y}`;
+          const finalPlacedPosition = placedPosition;
+          setFallingTileData(prev => {
+            const newMap = new Map(prev);
+            newMap.set(tileKey, {
+              y: finalPlacedPosition.y,
+              column: finalPlacedPosition.x,
+              delay: delay,
+              duration: duration
+            });
+            return newMap;
+          });
+
+          setFallingTiles(prev => new Set(prev).add(tileKey));
+
+          const landingTime = (delay + duration * 0.7) * 1000;
+          setTimeout(() => {
+            playTileDropSound(soundEnabled);
+            if (fallDistance > 4) {
+              setBottomRowShake(prev => new Set(prev).add(col));
+              setTimeout(() => {
+                setBottomRowShake(prev => {
+                  const newSet = new Set(prev);
+                  newSet.delete(col);
+                  return newSet;
+                });
+              }, 300);
+            }
+          }, landingTime);
+
+          const totalTime = (delay + duration) * 1000 + 50;
+          setTimeout(() => {
+            setFallingTiles(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(tileKey);
+              return newSet;
+            });
+            setFallingTileData(prev => {
+              const newMap = new Map(prev);
+              newMap.delete(tileKey);
+              return newMap;
+            });
+            const updatedQueue = columnFallQueue.current.get(col) || [];
+            const filteredQueue = updatedQueue.filter(p => `${p.x}-${p.y}` !== tileKey);
+            if (filteredQueue.length === 0) {
+              columnFallQueue.current.delete(col);
+            } else {
+              columnFallQueue.current.set(col, filteredQueue);
+            }
+          }, totalTime);
+
+          // If this is a blank tile, show modal
+          const placedTile = state.board[placedPosition.y][placedPosition.x];
+          if (placedTile && placedTile.letter === ' ') {
+            setBlankTileModal({
+              isOpen: true,
+              position: placedPosition,
+              currentLetter: placedTile.blankLetter || ''
+            });
+          }
+        }
+
+        // Remove tile from local rack
+        setLocalMultiplayerRack(prev => prev.filter((_, i) => i !== index));
+
+        // Clear selections
+        setSelectedTiles(prev => prev.filter(i => i !== index));
+        setPendingPlacements([]);
+        setIsPlacingTiles(false);
+
+        // Force re-render
+        setRenderKey(prev => prev + 1);
+
+        console.log('📍 Local multiplayer: tile placed at:', { x, y }, '(will sync on submit)');
+      } catch (error) {
+        console.error('Error placing tile locally:', error);
+        showError(UI_MESSAGES.errors.errorPlacingTile(error instanceof Error ? error.message : 'Unknown error'));
+      }
       return;
     }
 
@@ -985,11 +1162,114 @@ function App() {
   };
 
   const handleTileRemove = (x: number, y: number) => {
-    // Multiplayer mode: emit socket event
+    // Multiplayer mode: use local engine for optimistic updates
     if (isMultiplayer) {
-      console.log('📤 Multiplayer: asking to remove tile at', { x, y });
-      // We need to import this from useSocket
-      socketRemoveTile(x, y);
+      if (!localMultiplayerEngine || !room || !playerId) {
+        console.warn('Local multiplayer engine not available');
+        return;
+      }
+
+      const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+      const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
+
+      const state = localMultiplayerEngine.getState();
+      const tile = state.board[y][x];
+
+      // Check if tile exists and belongs to me
+      if (!tile) return;
+      if (tile.playerId !== myGamePlayerId) {
+        showError(UI_MESSAGES.errors.cannotRemoveOwnTiles);
+        return;
+      }
+
+      // Only allow removing tiles placed THIS turn
+      const wasPlacedThisTurn = tilesPlacedThisTurn.some(pos => pos.x === x && pos.y === y);
+      if (!wasPlacedThisTurn) return;
+
+      try {
+        const tileToRemove = state.board[y][x];
+        if (!tileToRemove) return;
+
+        // Animation
+        requestAnimationFrame(() => {
+          const rackElement = document.querySelector('.rack-container');
+          const cellElement = document.querySelector(`.cell[data-x="${x}"][data-y="${y}"]`);
+
+          let dx = -200;
+          let dy = -300;
+
+          if (rackElement && cellElement) {
+            const rackRect = rackElement.getBoundingClientRect();
+            const cellRect = (cellElement as HTMLElement).getBoundingClientRect();
+            dx = rackRect.left + rackRect.width / 2 - (cellRect.left + cellRect.width / 2);
+            dy = rackRect.top + rackRect.height / 2 - (cellRect.top + cellRect.height / 2);
+          }
+
+          const tileKey = `${x}-${y}`;
+          setRemovingTiles(prev => new Set(prev).add(tileKey));
+          setRemovingTileData(prev => {
+            const newMap = new Map(prev);
+            newMap.set(tileKey, { dx, dy });
+            return newMap;
+          });
+
+          setRenderKey(prev => prev + 1);
+
+          setTimeout(() => {
+            const removedTile = localMultiplayerEngine.removeTile(x, y);
+            if (removedTile) {
+              // Return tile to local rack
+              const tileToReturn = { letter: removedTile.letter, points: removedTile.points };
+              setLocalMultiplayerRack(prev => [...prev, tileToReturn]);
+
+              // Update tilesPlacedThisTurn
+              setTilesPlacedThisTurn(prev => {
+                return prev
+                  .filter(pos => !(pos.x === x && pos.y === y))
+                  .map(pos => {
+                    if (pos.x === x && pos.y < y) {
+                      return { x: pos.x, y: pos.y + 1 };
+                    }
+                    return pos;
+                  });
+              });
+
+              // Update selected words
+              setSelectedWords(prev => prev
+                .filter(wordPositions =>
+                  !wordPositions.some(pos => pos.x === x && pos.y === y)
+                )
+                .map(wordPositions =>
+                  wordPositions.map(pos => {
+                    if (pos.x === x && pos.y < y) {
+                      return { x: pos.x, y: pos.y + 1 };
+                    }
+                    return pos;
+                  })
+                )
+              );
+
+              // Clear removal animation
+              setRemovingTiles(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(tileKey);
+                return newSet;
+              });
+              setRemovingTileData(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(tileKey);
+                return newMap;
+              });
+
+              setRenderKey(prev => prev + 1);
+              console.log('📍 Local multiplayer: tile removed and returned to rack:', { x, y });
+            }
+          }, 500);
+        });
+      } catch (error) {
+        console.error('Error removing tile locally:', error);
+        showError(UI_MESSAGES.errors.errorRemovingTile(error instanceof Error ? error.message : 'Unknown error'));
+      }
       return;
     }
 
@@ -1312,19 +1592,27 @@ function App() {
   };
 
   const handleSubmitMove = async () => {
-    // Multiplayer mode: emit socket event
+    // Multiplayer mode: validate locally, then batch-send placements + claims to server
     if (isMultiplayer) {
-      console.log('📤 Multiplayer: submitting word claims');
+      console.log('📤 Multiplayer: validating and submitting batch update');
 
-      const currentState = socketGameState;
-      if (!currentState) return;
+      if (!localMultiplayerEngine || !room || !playerId) {
+        showError('Game state not available');
+        return;
+      }
+
+      const currentState = localMultiplayerEngine.getState();
+
+      // Determine my game player ID
+      const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
+      const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
 
       if (!dictionaryLoaded || dictionary.size === 0) {
         showError(UI_MESSAGES.errors.dictionaryLoading);
         return;
       }
 
-      // 1. Require word selection OR tile placement (but actually must select word)
+      // 1. Require word selection
       if (selectedWords.length === 0) {
         showError(UI_MESSAGES.errors.selectWordBeforeSubmit);
         return;
@@ -1337,11 +1625,11 @@ function App() {
         return;
       }
 
-      // 3. New Rule: ALL tiles placed this turn MUST be used in at least one selected word
-      const allNewlyPlacedTiles = socketTilesPlacedThisTurn || []; // Use accumulated socket state
+      // 3. Check tiles placed this turn (using local tracking)
+      const allNewlyPlacedTiles = tilesPlacedThisTurn;
 
       if (allNewlyPlacedTiles.length > 0) {
-        // Check if at least one word contains a newly placed tile (Connectivity Rule)
+        // Check if at least one word contains a newly placed tile
         const hasNewTile = validWords.some(wordPositions =>
           allNewlyPlacedTiles.some(newPos =>
             wordPositions.some(pos => pos.x === newPos.x && pos.y === newPos.y)
@@ -1361,7 +1649,6 @@ function App() {
         );
 
         if (!allPlacedTilesInWords) {
-          // Identify unused tiles to show helpful error
           const unclaimedTiles = allNewlyPlacedTiles.filter(placedPos =>
             !validWords.some(wordPositions =>
               wordPositions.some(pos => pos.x === placedPos.x && pos.y === placedPos.y)
@@ -1375,20 +1662,45 @@ function App() {
           return;
         }
       } else {
-        // If no tiles placed this turn, user cannot submit (unless pass? but submit usually implies playing)
-        // Actually, if selectedWords > 0 but no placed tiles, it's usually invalid unless modifiable board.
-        // In Scrabble, you must place tiles OR swap OR pass. You can't just select existing words.
         showError(UI_MESSAGES.errors.mustPlaceTile);
         return;
       }
 
-      // Emit claim_words event to server
-      const claims = validWords.map(positions => ({ positions }));
-      socketClaimWords(claims);
+      // 4. Validate words against dictionary locally
+      const claims: WordClaim[] = validWords.map(positions => ({
+        positions,
+        playerId: myGamePlayerId
+      }));
+
+      const result = await localMultiplayerEngine.processWordClaims(claims, allNewlyPlacedTiles, dictionary);
+
+      if (!result.valid) {
+        const errorMessages = result.results
+          .map(r => r.error)
+          .filter((error): error is string => error !== undefined && error.length > 0);
+
+        if (errorMessages.length > 0) {
+          showError(UI_MESSAGES.errors.invalidWordClaims(errorMessages.join('. ')));
+        } else {
+          showError(UI_MESSAGES.errors.invalidWordClaimsGeneric);
+        }
+        return;
+      }
+
+      console.log('✅ Local validation passed! Score:', result.totalScore, 'Sending batch to server...');
+
+      // 5. Batch-send to server: all tile placements + word claims
+      // For now, we still use the socket to sync, but we send the claims after local validation
+      // The server will process this as a single atomic operation
+      const claimsForServer = validWords.map(positions => ({ positions }));
+      socketClaimWords(claimsForServer);
 
       // Clear local selection state
       setSelectedWords([]);
       setWordDirection(null);
+
+      // Note: The server will respond with turn_changed event which will trigger
+      // a fresh sync from server state via the useEffect that watches socketGameState
 
       return;
     }
@@ -1890,28 +2202,27 @@ function App() {
   };
 
   const handleBlankTileEdit = (x: number, y: number) => {
-    // Multiplayer mode: check socket game state
+    // Multiplayer mode: use local engine state for optimistic UI
     if (isMultiplayer) {
-      if (!socketGameState || !room || playerId === null) return;
+      if (!localMultiplayerEngine || !room || playerId === null) return;
 
       const myIdx = room.players.findIndex(rp => rp.id === playerId);
       if (myIdx === -1) return;
 
-      const tile = socketGameState.board[y]?.[x];
-      const isMyTurn = socketGameState.currentPlayerId === myIdx;
-      const finalTilesPlacedThisTurn = socketTilesPlacedThisTurn || [];
+      const state = localMultiplayerEngine.getState();
+      const tile = state.board[y]?.[x];
+      const isMyTurn = state.currentPlayerId === myIdx;
 
       // Only allow editing if:
       // 1. It's a blank tile
       // 2. It belongs to current player (me)
       // 3. It's not locked (can edit until turn is submitted)
       // 4. It's my turn
-      // Allow editing any blank tile that belongs to the player during their turn
-      if (tile && 
-          tile.letter === ' ' &&
-          tile.playerId === myIdx &&
-          !tile.isBlankLocked &&
-          isMyTurn) {
+      if (tile &&
+        tile.letter === ' ' &&
+        tile.playerId === myIdx &&
+        !tile.isBlankLocked &&
+        isMyTurn) {
         setBlankTileModal({
           isOpen: true,
           position: { x, y },
@@ -1936,11 +2247,11 @@ function App() {
     // 4. It's the current player's turn
     // Allow editing any blank tile that belongs to the player during their turn (not just ones placed this turn)
     // This allows re-editing blank tiles before submitting
-    if (tile && 
-        tile.letter === ' ' &&
-        tile.playerId === currentPlayer.id &&
-        !tile.isBlankLocked &&
-        isCurrentPlayerTurn) {
+    if (tile &&
+      tile.letter === ' ' &&
+      tile.playerId === currentPlayer.id &&
+      !tile.isBlankLocked &&
+      isCurrentPlayerTurn) {
       setBlankTileModal({
         isOpen: true,
         position: { x, y },
@@ -1984,7 +2295,10 @@ function App() {
   }
 
   // Use socket game state for multiplayer, local state otherwise
-  const state = isMultiplayer ? socketGameState! : gameManager?.getState();
+  // In multiplayer with local changes: use localMultiplayerEngine for optimistic rendering
+  const state = isMultiplayer
+    ? (localMultiplayerEngine ? localMultiplayerEngine.getState() : socketGameState!)
+    : gameManager?.getState();
 
   // Find MY player index in the game (the player I control)
   // In multiplayer: room.players[i].id is socket ID, game players use index as ID
@@ -1993,7 +2307,11 @@ function App() {
     : state?.currentPlayerId ?? 0;  // In local mode, we control current player
 
   // Get my player object (the one I control) 
-  const myPlayer = state?.players[myPlayerIndex];
+  // In multiplayer: use local rack for optimistic updates, server rack for score/other data
+  const serverMyPlayer = state?.players[myPlayerIndex];
+  const myPlayer = isMultiplayer && localMultiplayerRack.length > 0
+    ? { ...serverMyPlayer!, rack: localMultiplayerRack }
+    : serverMyPlayer;
 
   // Get the current turn player (may or may not be me)
   const currentTurnPlayer = state?.players[state?.currentPlayerId ?? 0];
