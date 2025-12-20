@@ -1,183 +1,233 @@
-# Deploying Grabble Socket.IO Server
+# Deploying Grabble to Production
 
-This guide will help you deploy your Socket.IO server so it works with your GitHub Pages frontend.
-
-## Option 1: Railway (Recommended - Easiest)
-
-Railway is the easiest option with a generous free tier.
-
-### Step 1: Prepare Your Repository
-
-Make sure your `server` folder is committed to GitHub:
-```bash
-git add server/
-git commit -m "Add server files"
-git push origin sanya
-```
-
-### Step 2: Deploy to Railway
-
-1. **Sign up for Railway**
-   - Go to https://railway.app
-   - Click "Start a New Project"
-   - Sign in with GitHub
-
-2. **Create New Project**
-   - Click "New Project"
-   - Select "Deploy from GitHub repo"
-   - Choose your `grabble` repository
-   - Select the `sanya` branch (or `main` if you prefer)
-
-3. **Configure Service**
-   - Railway will auto-detect it's a Node.js project
-   - **Important**: Set the **Root Directory** to `server`
-     - Click on your service → Settings → Root Directory → Set to `server`
-   - Railway will automatically:
-     - Run `npm install`
-     - Run `npm run build` (if build script exists)
-     - Run `npm start`
-
-4. **Get Your Server URL**
-   - After deployment, Railway will give you a URL like:
-     - `https://grabble-production.up.railway.app`
-   - Copy this URL!
-
-### Step 3: Update Your Frontend
-
-1. **Update `src/hooks/useSocket.ts`**
-   - Replace the placeholder URL with your Railway URL:
-   ```typescript
-   if (window.location.hostname.includes('github.io')) {
-     return 'https://your-railway-url.railway.app'; // Replace with your actual URL
-   }
-   ```
-
-2. **Rebuild and Deploy to GitHub Pages**
-   ```bash
-   npm run build
-   npm run deploy
-   ```
-
-### Step 4: Test
-
-1. Open your GitHub Pages site: https://saumyamishraal.github.io/grabble
-2. Try creating a room - it should connect to your Railway server!
+This guide covers deploying both your **frontend** (React app) and **backend** (Socket.IO server) for multiplayer functionality.
 
 ---
 
-## Option 2: Render (Free Tier Available)
+## 🎯 Deployment Strategy
 
-### Step 1: Deploy to Render
+**Frontend** → Vercel or GitHub Pages (static hosting)  
+**Backend** → Render, Fly.io, or paid hosting (WebSocket server)
 
-1. **Sign up**: Go to https://render.com and sign in with GitHub
-
-2. **Create New Web Service**
-   - Click "New +" → "Web Service"
-   - Connect your GitHub repository
-   - Select the `sanya` branch
-
-3. **Configure Service**
-   - **Name**: `grabble-server`
-   - **Root Directory**: `server`
-   - **Environment**: `Node`
-   - **Build Command**: `npm install && npm run build`
-   - **Start Command**: `npm start`
-   - **Plan**: Free (or paid if you want better performance)
-
-4. **Deploy**
-   - Click "Create Web Service"
-   - Render will build and deploy
-   - Get your URL: `https://grabble-server.onrender.com`
-
-### Step 2: Update Frontend
-
-Same as Railway - update `src/hooks/useSocket.ts` with your Render URL.
-
-**Note**: Render free tier spins down after inactivity. First request may take ~30 seconds.
+> **Note**: Vercel serverless doesn't support persistent WebSocket connections, so your backend must be deployed separately.
 
 ---
 
-## Option 3: Fly.io (Good Free Tier)
+## 📦 Part 1: Deploy Backend (Socket.IO Server)
 
-### Step 1: Install Fly CLI
+### Option 1: Render (Free Tier - Recommended) ⭐
+
+**Pros**: Free tier available, reliable  
+**Cons**: Cold starts after 15 min inactivity (~30-60s spin-up time on first connection)
+
+#### Step 1: Deploy to Render
+
+1. Go to [render.com](https://render.com) and sign in with GitHub
+
+2. Click **"New +"** → **"Web Service"**
+
+3. Connect your repository and select your branch
+
+4. **Configure the service**:
+   ```
+   Name:           grabble-server
+   Root Directory: server
+   Environment:    Node
+   Build Command:  npm install && npm run build
+   Start Command:  npm start
+   Plan:           Free
+   ```
+
+5. Click **"Create Web Service"**
+
+6. **Copy your server URL**: `https://grabble-server.onrender.com`
+
+---
+
+### Option 2: Fly.io (Free Tier - No Cold Starts) 🚀
+
+**Pros**: Free tier, always-on (no cold starts), great performance  
+**Cons**: Requires CLI setup
+
+#### Step 1: Install Fly CLI
 
 ```bash
-# Mac
+# macOS
 brew install flyctl
 
-# Or download from https://fly.io/docs/getting-started/installing-flyctl/
+# Other: https://fly.io/docs/getting-started/installing-flyctl/
 ```
 
-### Step 2: Login
+#### Step 2: Login and Deploy
 
 ```bash
+# Login
 flyctl auth login
-```
 
-### Step 3: Create App
-
-```bash
+# Navigate to server directory
 cd server
+
+# Launch (creates fly.toml config)
 flyctl launch
-```
 
-Follow the prompts. Fly.io will create a `fly.toml` config file.
-
-### Step 4: Deploy
-
-```bash
+# Follow prompts, then deploy
 flyctl deploy
 ```
 
-Get your URL: `https://your-app-name.fly.dev`
+Your server URL: `https://your-app-name.fly.dev`
 
 ---
 
-## Environment Variables (if needed)
+### Option 3: Paid Options ($5-7/month)
 
-Most platforms auto-set `PORT`. If you need custom env vars:
+For production use without cold starts:
 
-- **Railway**: Project → Service → Variables
-- **Render**: Service → Environment
-- **Fly.io**: `flyctl secrets set KEY=value`
+| Platform | Cost | Notes |
+|----------|------|-------|
+| **Render** | $7/month | Starter tier, no cold starts |
+| **Railway** | ~$5/month | Pay-as-you-go, easy setup |
+| **Fly.io** | ~$2-5/month | Only pay for what you use |
+| **DigitalOcean** | $5/month | App Platform, reliable |
 
 ---
 
-## Troubleshooting
+## 🎨 Part 2: Deploy Frontend
 
-### Server won't start
-- Check logs in your hosting platform
-- Ensure `npm start` runs `node dist/index.js`
-- Verify TypeScript compiled successfully
+### Option 1: Vercel (Recommended) ⭐
+
+1. Go to [vercel.com](https://vercel.com) and sign in with GitHub
+
+2. Click **"New Project"** → Select your repository
+
+3. **Configure**:
+   ```
+   Framework Preset: Create React App
+   Root Directory:   (leave empty - uses project root)
+   Build Command:    npm run build
+   Output Directory: build
+   ```
+
+4. Click **"Deploy"**
+
+5. **Your frontend URL**: `https://grabble-yourusername.vercel.app`
+
+---
+
+### Option 2: GitHub Pages (Alternative)
+
+Already set up! Just run:
+```bash
+npm run deploy
+```
+
+Your app deploys to: `https://saumyamishraal.github.io/grabble`
+
+---
+
+## 🔗 Part 3: Connect Frontend to Backend
+
+### Step 1: Update Socket URL
+
+Edit [`src/hooks/useSocket.ts`](file:///Users/saumyamishra/Projects/grabble/src/hooks/useSocket.ts):
+
+```typescript
+const getSocketUrl = () => {
+  // Production: use your deployed backend URL
+  if (window.location.hostname.includes('vercel.app') || 
+      window.location.hostname.includes('github.io')) {
+    return 'https://grabble-server.onrender.com'; // ← Replace with YOUR backend URL
+  }
+  
+  // Local development
+  return 'http://localhost:3001';
+};
+```
+
+### Step 2: Update CORS on Backend
+
+Edit [`server/index.ts`](file:///Users/saumyamishra/Projects/grabble/server/index.ts) (line 26) to add your frontend domain:
+
+```typescript
+cors: {
+  origin: [
+    'http://localhost:3000',
+    'https://saumyamishraal.github.io',
+    'https://grabble-yourusername.vercel.app', // ← Add your Vercel URL
+    // ... other origins
+  ],
+  // ...
+}
+```
+
+### Step 3: Redeploy
+
+```bash
+# Commit changes
+git add .
+git commit -m "Update for production deployment"
+git push
+
+# Backend auto-redeploys (Render/Fly.io watches your repo)
+
+# Frontend - redeploy
+npm run build
+npm run deploy  # or push to trigger Vercel build
+```
+
+---
+
+## ✅ Testing Your Deployment
+
+1. Open your frontend URL
+2. Click **"Create Room"**
+3. If using Render free tier, wait 30-60s on first connection (cold start)
+4. Share the room code with a friend
+5. Play Grabble! 🎮
+
+---
+
+## 🛠️ Troubleshooting
+
+### "WebSocket connection failed"
+- Check console for CORS errors
+- Verify backend URL in `useSocket.ts` matches your deployed server
+- Ensure backend is running (visit server URL in browser)
+
+### Cold starts too slow (Render free tier)
+- Upgrade to Render paid tier ($7/month)
+- Or switch to Fly.io free tier (no cold starts)
+
+### Backend logs show errors
+- **Render**: Dashboard → Service → Logs
+- **Fly.io**: `flyctl logs`
 
 ### CORS errors
-- Your server already allows `https://saumyamishraal.github.io`
-- If using a different domain, update CORS in `server/index.ts`
-
-### Connection refused
-- Check your server URL is correct in `useSocket.ts`
-- Verify server is running (check hosting platform dashboard)
-- Test server directly: `curl https://your-server-url.com`
+- Make sure your frontend domain is in `server/index.ts` CORS config
+- Redeploy backend after CORS changes
 
 ---
 
-## Recommended: Railway
+## 💡 Recommended Setup
 
-Railway is recommended because:
-- ✅ Easiest setup
-- ✅ Free tier ($5 credit/month)
-- ✅ Auto-deploys on git push
-- ✅ Good performance
-- ✅ Easy to scale
+**For casual play with friends (Free)**:
+- Frontend: Vercel or GitHub Pages
+- Backend: Render free tier (accept 30s cold start)
+
+**For production/no cold starts ($5-7/month)**:
+- Frontend: Vercel
+- Backend: Render paid tier or Fly.io
 
 ---
 
-## After Deployment
+## 📊 Understanding Cold Starts
 
-Once your server is live:
+**What is a cold start?**  
+On free tiers, your server "sleeps" after 15 minutes of inactivity to save resources. The next connection takes 30-60s to "wake up" the server.
 
-1. Update `src/hooks/useSocket.ts` with your server URL
-2. Commit and push
-3. Rebuild and deploy to GitHub Pages: `npm run deploy`
-4. Test multiplayer functionality!
+**Real-world impact**:
+- First game of the day: 30-60s wait ⏳
+- Subsequent games: Instant connections ⚡
+- After 15 min idle: Cold start again
+
+**Paid tiers** keep your server always-on (no cold starts).
 
