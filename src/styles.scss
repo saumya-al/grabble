@@ -1154,6 +1154,25 @@ textarea,
                     box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
                 }
             }
+
+            &.form-checkbox {
+                text-align: left;
+
+                label {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-bottom: 0;
+                    white-space: nowrap;
+                    font-weight: 500;
+                }
+
+                input[type="checkbox"] {
+                    width: 18px;
+                    height: 18px;
+                    padding: 0;
+                }
+            }
         }
 
         .btn {
@@ -1707,17 +1726,27 @@ textarea,
 
 /* Form Checkbox Styling */
 .form-checkbox {
+    text-align: left;
+
     label {
-        display: flex;
+        display: inline-flex !important;
         align-items: center;
+        justify-content: flex-start;
         gap: 0.5rem;
         cursor: pointer;
-        font-weight: normal;
+        font-weight: 500;
+        margin-bottom: 0;
+        white-space: nowrap;
 
         input[type="checkbox"] {
             width: 18px;
             height: 18px;
             cursor: pointer;
+            margin: 0;
+        }
+
+        span {
+            line-height: 1.4;
         }
     }
 }

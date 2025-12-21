@@ -14,10 +14,11 @@ interface SetupModalProps {
     gameMode: GameModeSelection,
     zenMode: boolean
   ) => void;
+  onClose?: () => void;
   highScore?: number;
 }
 
-const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) => {
+const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, onClose, highScore = 0 }) => {
   const { user } = useAuth();
   const [gameMode, setGameMode] = useState<GameModeSelection>('normal');
   const [numPlayers, setNumPlayers] = useState(2);
@@ -62,12 +63,13 @@ const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) =
   return (
     <div className="modal show">
       <div className="modal-content">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
           <h2 style={{ margin: 0 }}>{UI_MESSAGES.setup.startNewGame}</h2>
           <AuthButton variant="compact" />
         </div>
+
         <form onSubmit={handleSubmit}>
-          {/* Game Mode Selection */}
+          {/* Game Mode Toggle */}
           <div className="form-group">
             <label>{UI_MESSAGES.setup.gameMode}</label>
             <div className="game-mode-toggle">
@@ -90,7 +92,7 @@ const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) =
 
           {gameMode === 'normal' ? (
             <>
-              {/* Normal Mode Options */}
+              {/* Versus Mode Options */}
               <div className="form-group">
                 <label>{UI_MESSAGES.setup.numberOfPlayers}</label>
                 <select
@@ -105,7 +107,7 @@ const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) =
 
               {playerNames.map((name, index) => (
                 <div key={index} className="form-group">
-                  <label>{UI_MESSAGES.setup.playerName(index + 1)}</label>
+                  <label>{UI_MESSAGES.setup.playerName(index)}</label>
                   <input
                     type="text"
                     value={name}
@@ -156,7 +158,7 @@ const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) =
                     checked={zenMode}
                     onChange={(e) => setZenMode(e.target.checked)}
                   />
-                  {UI_MESSAGES.setup.zenMode}
+                  <span>{UI_MESSAGES.setup.zenMode}</span>
                 </label>
               </div>
 
@@ -189,13 +191,24 @@ const SetupModal: React.FC<SetupModalProps> = ({ onStartGame, highScore = 0 }) =
                 checked={hintsEnabled}
                 onChange={(e) => setHintsEnabled(e.target.checked)}
               />
-              {UI_MESSAGES.setup.enableHints}
+              <span>{UI_MESSAGES.setup.enableHints}</span>
             </label>
           </div>
 
-          <button type="submit" className="btn btn-primary">
-            {gameMode === 'solo' ? UI_MESSAGES.buttons.startSolo : UI_MESSAGES.buttons.startGame}
-          </button>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '1rem' }}>
+            {onClose && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onClose}
+              >
+                {UI_MESSAGES.buttons.back}
+              </button>
+            )}
+            <button type="submit" className="btn btn-primary">
+              {gameMode === 'solo' ? UI_MESSAGES.buttons.startSolo : UI_MESSAGES.buttons.startGame}
+            </button>
+          </div>
         </form>
       </div>
     </div>

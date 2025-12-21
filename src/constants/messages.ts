@@ -11,14 +11,14 @@ export const UI_MESSAGES = {
     submitMove: 'Submit Move',
     swapTiles: 'Swap Tiles',
     swapTilesWithCount: (count: number) => `Swap Tiles${count > 0 ? ` (${count})` : ''}`,
-    swapTilesTooltip: (count: number) => count > 0 
-      ? `Swap ${count} selected tile${count !== 1 ? 's' : ''}` 
+    swapTilesTooltip: (count: number) => count > 0
+      ? `Swap ${count} selected tile${count !== 1 ? 's' : ''}`
       : 'Select tiles to swap',
     hint: '💡 Hint',
     hintWithLevel: (level: number) => `💡 Hint (${level}/4)`,
     hintFullSolution: '💡 Full Solution',
-    hintTooltip: (level: number) => level === 0 
-      ? 'Get a hint' 
+    hintTooltip: (level: number) => level === 0
+      ? 'Get a hint'
       : `Click for more detail (level ${level + 1})`,
     clear: 'Clear',
     clearSelection: 'Clear selection',
@@ -83,10 +83,10 @@ export const UI_MESSAGES = {
     players: (count: number) => `${count} Players`,
     playerName: (index: number) => `Player ${index + 1} Name:`,
     targetScore: 'Target Score:',
-    zenMode: '🧘 Zen Mode (hide score)',
-    zenModeDescription: '🎯 Build words endlessly until the board fills up!',
-    zenModeHighScore: '📈 Your high score will be saved on this device.',
-    enableHints: '💡 Enable Hints',
+    zenMode: 'Zen Mode (hide score)',
+    zenModeDescription: 'Build words endlessly until the board fills up!',
+    zenModeHighScore: 'Your high score will be saved on this device.',
+    enableHints: 'Enable Hints',
   },
 
   // ============================================

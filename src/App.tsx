@@ -2504,7 +2504,7 @@ function App() {
 
   // Local mode: show setup modal
   if (showSetup && !isMultiplayer) {
-    return <SetupModal onStartGame={handleStartGame} highScore={highScore} />;
+    return <SetupModal onStartGame={handleStartGame} onClose={() => setShowSetup(false)} highScore={highScore} />;
   }
 
   // Use socket game state for multiplayer, local state otherwise
