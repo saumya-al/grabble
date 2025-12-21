@@ -116,21 +116,25 @@ Bonuses stack multiplicatively
 - **Build**: Create React App (CRA)
 - **Game Engine**: Pure TypeScript (no dependencies)
 - **Dictionary**: Text file (one word per line)
+- **Multiplayer**: Firebase Realtime Database
 
 ## File Structure
 
 ```
 grabble/
-├── react-ui/
-│   ├── src/
-│   │   ├── components/        # React UI components
-│   │   ├── game-engine/       # Core game logic
-│   │   ├── App.tsx            # Main app
-│   │   └── styles.scss        # Game styles
-│   ├── public/
-│   │   └── dictionary.txt     # Word dictionary
-│   └── package.json
-├── README.md                   # Project overview
+├── src/
+│   ├── components/            # React UI components
+│   ├── hooks/
+│   │   └── useGameSync.ts     # Firebase multiplayer hook
+│   ├── game-engine.ts         # Core game logic
+│   ├── game-state-manager.ts  # Game lifecycle management
+│   ├── firebase.ts            # Firebase config & helpers
+│   ├── App.tsx                # Main app
+│   └── styles.scss            # Game styles
+├── public/
+│   └── dictionary.txt         # Word dictionary
+├── firebase-rules.json        # Firebase security rules
+├── README.md                  # Project overview
 └── ARCHITECTURE.md            # This file
 ```
 
@@ -149,11 +153,16 @@ grabble/
 - User interactions
 - Dictionary loading
 
-### Phase 3: Future Enhancements
-- Multiplayer via Socket.IO
-- Database persistence
-- Real-time synchronization
+### Phase 3: Firebase Multiplayer ✅
+- Firebase Realtime Database integration
+- Room creation and joining
+- Real-time game state synchronization
+- Local-first processing with batch sync
+
+### Phase 4: Future Enhancements
+- Firebase security rules (production-ready)
 - Mobile app version
+- AI opponent for solo mode
 
 ## Key Design Decisions
 
@@ -163,12 +172,13 @@ grabble/
 4. **Mobile-First**: Responsive design for all devices
 5. **Component-Based**: Each UI piece is independent and reusable
 
-## Migration Path: Prototype → Production
+## Multiplayer Architecture
 
-When ready to add multiplayer:
-1. Extract game engine to shared package
-2. Add Socket.IO server
-3. Move state management to server
-4. Add database persistence
-5. Keep React UI, connect via Socket.IO client
+Firebase Realtime Database powers the multiplayer functionality:
+
+1. **Room Management**: Rooms stored at `rooms/{roomCode}`
+2. **Player Presence**: Players tracked under `rooms/{roomCode}/players`
+3. **Game State**: Full game state synced at `rooms/{roomCode}/game/state`
+4. **Local-First Processing**: Moves validated locally, then batch-synced to Firebase
+5. **Real-Time Updates**: All clients subscribe to Firebase for instant sync
 
