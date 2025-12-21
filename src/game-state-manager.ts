@@ -4,7 +4,7 @@
  * Game state manager for turn order, player management, and game lifecycle
  */
 
-import type { GameState, Player, Tile } from './types';
+import type { GameState, Player } from './types';
 import { GrabbleEngine } from './game-engine';
 
 /**

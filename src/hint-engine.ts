@@ -384,7 +384,7 @@ export function findFirstValidWord(
     }
 
     // PASS 1: Try regular tiles first (cheaper and avoids blank when letter exists)
-    for (const { column, row } of accessible) {
+    for (const { column } of accessible) {
         for (const direction of ALL_DIRECTIONS) {
             for (const tileIndex of regularTileIndices) {
                 const tile = rack[tileIndex];

@@ -10,13 +10,12 @@ import {
     set,
     get,
     onValue,
-    push,
     update,
     remove,
     generateRoomCode,
     dbPaths
 } from '../firebase';
-import type { GameState, Position, Tile } from '../types';
+import type { GameState, Position } from '../types';
 import type { Room, RoomPlayer } from '../server-types';
 import { GameStateManager } from '../game-state-manager';
 

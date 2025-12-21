@@ -4,7 +4,7 @@
  * Core game engine with game logic
  */
 
-import type { Tile, Position, TilePlacement, WordClaim, ClaimedWord, GameState, Player } from './types';
+import type { Tile, Position, TilePlacement, WordClaim, GameState } from './types';
 import { STANDARD_SCRABBLE_DISTRIBUTION } from './types';
 import { isValidWordLine, extractWordFromPositions, getReverseWord, containsNewTile } from './word-detection';
 

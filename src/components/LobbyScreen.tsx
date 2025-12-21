@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import type { Room, RoomPlayer } from '../server-types';
+import type { Room } from '../server-types';
 import { UI_MESSAGES } from '../constants/messages';
 import { useAuth } from '../contexts/AuthContext';
 import AuthButton from './AuthButton';

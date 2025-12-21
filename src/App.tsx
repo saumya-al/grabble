@@ -3,7 +3,7 @@ import './App.css';
 import './styles.scss';
 import { GrabbleEngine } from './game-engine';
 import { GameStateManager } from './game-state-manager';
-import type { Tile, Position, WordClaim, Player, ClaimedWord } from './types';
+import type { Tile, Position, WordClaim } from './types';
 import { extractWordFromPositions, isValidWordLine, getReverseWord } from './word-detection';
 import { Trie, buildTrieFromDictionary, findFirstValidWord, getHintAtLevel, HintResult, HintSolution } from './hint-engine';
 import { initSounds, playTileDropSound } from './utils/sounds';
@@ -82,10 +82,10 @@ function App() {
     startGame: firebaseStartGame,
     placeTiles: firebasePlaceTiles,
     claimWords: firebaseClaimWords,
-    swapTiles: firebaseSwapTiles,
-    removeTile: firebaseRemoveTile,
+    swapTiles: _firebaseSwapTiles,
+    removeTile: _firebaseRemoveTile,
     setBlankLetter: firebaseSetBlankLetter,
-    requestNewGame: firebaseRequestNewGame,
+    requestNewGame: _firebaseRequestNewGame,
     respondNewGame: firebaseRespondNewGame,
     newGameRequest,
     newGameDeclined,
@@ -107,7 +107,7 @@ function App() {
   const [engine, setEngine] = useState<GrabbleEngine | null>(null);
   const [selectedTiles, setSelectedTiles] = useState<number[]>([]);
   const [selectedWords, setSelectedWords] = useState<Position[][]>([]); // Array of word positions (multiple words)
-  const [wordDirection, setWordDirection] = useState<'horizontal' | 'vertical' | 'diagonal' | null>(null);
+  const [, setWordDirection] = useState<'horizontal' | 'vertical' | 'diagonal' | null>(null);
   const [pendingPlacements, setPendingPlacements] = useState<Array<{ column: number; tile: Tile }>>([]);
   const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Position[]>([]); // Track tiles placed this turn (positions only)
   // For multiplayer batch sync: track tile data (letter, points) to match against server rack at sync time
@@ -158,15 +158,15 @@ function App() {
   // Hint system state
   const [trie, setTrie] = useState<Trie | null>(null);
   const [hintLevel, setHintLevel] = useState<0 | 1 | 2 | 3 | 4>(0);
-  const [hintResult, setHintResult] = useState<HintResult | null>(null);
+  const [_hintResult, setHintResult] = useState<HintResult | null>(null);
   const [hintMessage, setHintMessage] = useState<string>('');
   const [hintedTileIndices, setHintedTileIndices] = useState<number[]>([]);  // Tiles to USE (golden)
   const [swapHintedTileIndices, setSwapHintedTileIndices] = useState<number[]>([]);  // Tiles to SWAP (red)
-  const [hintedColumns, setHintedColumns] = useState<number[]>([]);
+  const [, setHintedColumns] = useState<number[]>([]);
   const cachedHintSolutionRef = useRef<HintSolution | null>(null);  // Cache raw solution (not level-specific result)
 
   // Solo mode state - use cloud-synced high score
-  const { highScore, updateHighScore, loading: highScoreLoading } = useHighScore();
+  const { highScore, updateHighScore } = useHighScore();
   const [soloGameOver, setSoloGameOver] = useState(false);
   const [isNewHighScore, setIsNewHighScore] = useState(false);
 
@@ -363,7 +363,7 @@ function App() {
       // Only check if new words were added
       if (currentLength > prevClaimedWordsLengthRef.current) {
         const myRoomPlayerIndex = room.players.findIndex(rp => rp.id === playerId);
-        const myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
+        const _myGamePlayerId = myRoomPlayerIndex !== -1 ? myRoomPlayerIndex : -1;
 
         // Collect all bonus animations to show (flattened: word + bonus type)
         // Priority within each word: Diagonal → Emordnilap → Palindrome
@@ -1669,7 +1669,7 @@ function App() {
   };
 
   // Helper function to detect word direction from positions
-  const detectWordDirection = (positions: Position[]): 'horizontal' | 'vertical' | 'diagonal' | null => {
+  const _detectWordDirection = (positions: Position[]): 'horizontal' | 'vertical' | 'diagonal' | null => {
     if (positions.length < 2) return null;
 
     const sorted = [...positions].sort((a, b) => {
