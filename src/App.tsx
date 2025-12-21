@@ -101,7 +101,9 @@ function App() {
   const [selectedWords, setSelectedWords] = useState<Position[][]>([]); // Array of word positions (multiple words)
   const [wordDirection, setWordDirection] = useState<'horizontal' | 'vertical' | 'diagonal' | null>(null);
   const [pendingPlacements, setPendingPlacements] = useState<Array<{ column: number; tile: Tile }>>([]);
-  const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Position[]>([]); // Track tiles placed this turn
+  const [tilesPlacedThisTurn, setTilesPlacedThisTurn] = useState<Position[]>([]); // Track tiles placed this turn (positions only)
+  // For multiplayer batch sync: track tile data (letter, points) to match against server rack at sync time
+  const [multiplayerPlacementsThisTurn, setMultiplayerPlacementsThisTurn] = useState<Array<{ position: Position; column: number; tile: { letter: string; points: number } }>>([]);
   const [isPlacingTiles, setIsPlacingTiles] = useState(false);
   const [showSetup, setShowSetup] = useState(false); // Start false so lobby shows first when connected
   const [dictionary, setDictionary] = useState<Set<string>>(new Set());
@@ -285,6 +287,7 @@ function App() {
 
       // Clear tiles placed this turn when syncing
       setTilesPlacedThisTurn([]);
+      setMultiplayerPlacementsThisTurn([]);
       setSelectedWords([]);
 
       lastSyncedTurnRef.current = currentTurn;
@@ -925,6 +928,12 @@ function App() {
 
         if (placedPosition) {
           setTilesPlacedThisTurn(prev => [...prev, placedPosition!]);
+          // Track tile data for server sync - store tile info to match against server rack later
+          setMultiplayerPlacementsThisTurn(prev => [...prev, {
+            position: placedPosition!,
+            column,
+            tile: { letter: rackTile.letter, points: rackTile.points }
+          }]);
 
           // Falling animation logic (same as local mode)
           const fallDistance = placedPosition.y;
@@ -1689,18 +1698,59 @@ function App() {
 
       console.log('✅ Local validation passed! Score:', result.totalScore, 'Sending batch to server...');
 
-      // 5. Batch-send to server: all tile placements + word claims
-      // For now, we still use the socket to sync, but we send the claims after local validation
-      // The server will process this as a single atomic operation
+      // 5. Batch-send to server: first send tile placements, then word claims
+      // The server needs the tiles on its board before it can validate the words
+
+      // Match tiles against server rack to find correct indices
+      // The server rack is untouched (we only update locally), so we match tile data
+      if (multiplayerPlacementsThisTurn.length > 0 && socketGameState) {
+        const serverRack = socketGameState.players[myRoomPlayerIndex]?.rack || [];
+
+        console.log('📤 Syncing', multiplayerPlacementsThisTurn.length, 'tiles to server...');
+        console.log('  Server rack:', serverRack.map(t => t.letter).join(','));
+
+        // Track which server rack positions we've already used (for duplicate tiles)
+        const usedIndices = new Set<number>();
+        // Track the original indices we've already sent (for adjustment)
+        const sentOriginalIndices: number[] = [];
+
+        for (const placement of multiplayerPlacementsThisTurn) {
+          // Find this tile in the server rack (first unused match)
+          const serverRackIndex = serverRack.findIndex((t, idx) =>
+            !usedIndices.has(idx) &&
+            t.letter === placement.tile.letter &&
+            t.points === placement.tile.points
+          );
+
+          if (serverRackIndex === -1) {
+            console.error('Could not find tile in server rack:', placement.tile);
+            continue;
+          }
+
+          usedIndices.add(serverRackIndex);
+
+          // Adjust index for tiles already removed at lower positions
+          // Each tile we've already sent that was at a lower index shifts this one down
+          const adjustment = sentOriginalIndices.filter(idx => idx < serverRackIndex).length;
+          const adjustedIndex = serverRackIndex - adjustment;
+
+          sentOriginalIndices.push(serverRackIndex);
+
+          console.log(`  → Sending column ${placement.column}, original ${serverRackIndex}, adjusted ${adjustedIndex} (${placement.tile.letter})`);
+          socketPlaceTiles([{ column: placement.column, tileIndex: adjustedIndex }]);
+        }
+
+        // Small delay for server processing
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
       const claimsForServer = validWords.map(positions => ({ positions }));
       socketClaimWords(claimsForServer);
 
-      // Clear local selection state
+      // Clear local selection state and multiplayer placements
       setSelectedWords([]);
       setWordDirection(null);
-
-      // Note: The server will respond with turn_changed event which will trigger
-      // a fresh sync from server state via the useEffect that watches socketGameState
+      setMultiplayerPlacementsThisTurn([]);
 
       return;
     }
@@ -2346,7 +2396,9 @@ function App() {
   const turnIndicatorName = currentTurnPlayer?.name ?? 'Unknown';
 
   // Debug: Log tiles placed this turn
-  const finalTilesPlacedThisTurn = isMultiplayer ? socketTilesPlacedThisTurn : tilesPlacedThisTurn;
+  // In batch mode, we track tiles locally (tilesPlacedThisTurn), not from server (socketTilesPlacedThisTurn)
+  // This ensures delete buttons show for locally placed tiles before submit
+  const finalTilesPlacedThisTurn = tilesPlacedThisTurn; // Always use local tracking now
   console.log('🎮 Rendering with tilesPlacedThisTurn:', finalTilesPlacedThisTurn, 'isMultiplayer:', isMultiplayer);
 
   return (

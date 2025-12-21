@@ -166,6 +166,11 @@ export function useSocket(): UseSocketReturn {
         socket.on('player_joined', (player: Parameters<ServerToClientEvents['player_joined']>[0]) => {
             setRoom(prev => {
                 if (!prev) return null;
+                // Check for duplicate to prevent race conditions
+                if (prev.players.some(p => p.id === player.id)) {
+                    console.log('⚠️ Ignoring duplicate player_joined for:', player.name);
+                    return prev;
+                }
                 return {
                     ...prev,
                     players: [...prev.players, player]
