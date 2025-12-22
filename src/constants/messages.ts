@@ -42,6 +42,9 @@ export const UI_MESSAGES = {
     turnSoundOn: 'Turn Sound On',
     turnSoundOff: 'Turn Sound Off',
     confirmSwap: 'Confirm Swap',
+    endGame: 'End Game',
+    darkMode: 'Dark Mode',
+    lightMode: 'Light Mode',
   },
 
   // ============================================

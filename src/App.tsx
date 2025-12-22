@@ -23,6 +23,7 @@ import LobbyScreen from './components/LobbyScreen';
 import NewGameRequestModal from './components/NewGameRequestModal';
 import WinScreen from './components/WinScreen';
 import { useGameSync } from './hooks/useGameSync';
+import { useAuth } from './contexts/AuthContext';
 import { getPlayerColor } from './utils/playerColors';
 import { UI_MESSAGES } from './constants/messages';
 
@@ -94,6 +95,9 @@ function App() {
     syncGameState,
     getActiveGame,
   } = useGameSync();
+
+  // Get current user for active game tracking
+  const { user } = useAuth();
 
   // Log which backend is active
   useEffect(() => {
@@ -875,6 +879,24 @@ function App() {
     // Reset to lobby/home
     leaveRoom();
     setShowSetup(false);
+  };
+
+  // Handler for ending the game and returning to home
+  const handleEndGame = () => {
+    const confirmed = window.confirm('Are you sure you want to end this game? You will return to the lobby.');
+    if (!confirmed) return;
+
+    setShowWinScreen(false);
+    setWinnerInfo(null);
+    // Clear active game and leave room - pass uid to clear activeGame tracking
+    leaveRoom(user?.uid);
+    setGameManager(null);
+    setEngine(null);
+    setShowSetup(false);
+    // Reset solo mode state
+    setSoloGameOver(false);
+    setIsNewHighScore(false);
+    console.log('🏠 Ended game and returned to lobby');
   };
 
   // Watch for new game requests from other players
@@ -2572,6 +2594,7 @@ function App() {
         onStartNewGame={handleStartNewGame}
         onClearBoard={handleClearBoard}
         onToggleSound={handleToggleSound}
+        onEndGame={handleEndGame}
         soundEnabled={soundEnabled}
       />
       {/* Solo mode: custom score display (or hide in zen mode) */}
